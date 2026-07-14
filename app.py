@@ -201,10 +201,11 @@ opcion_ia = st.selectbox(
     ]
 )
 
+# 🌟 CORRECCIÓN: Usamos la etiqueta '-latest' para forzar a Google Workspace a encontrar el modelo
 if "Flash" in opcion_ia:
-    motor_elegido = 'gemini-1.5-flash'  # 🌟 Motor universal garantizado
+    motor_elegido = 'gemini-1.5-flash-latest'
 else:
-    motor_elegido = 'gemini-1.5-pro'    # 🌟 Motor avanzado universal
+    motor_elegido = 'gemini-1.5-pro-latest'
 
 st.divider()
 
