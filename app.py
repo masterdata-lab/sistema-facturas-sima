@@ -196,15 +196,15 @@ st.markdown("### ⚙️ Configuración del Motor")
 opcion_ia = st.selectbox(
     "Seleccionar Inteligencia Artificial:",
     options=[
-        "Gemini 2.5 Flash (Gratuito y Rápido - Facturas Clásicas)",
-        "Gemini 2.5 Pro (Requiere Facturación - OTs complejas y fotos)"
+        "Gemini 1.5 Flash (Gratuito y Rápido - Facturas Clásicas)",
+        "Gemini 1.5 Pro (Requiere Facturación - OTs complejas y fotos)"
     ]
 )
 
 if "Flash" in opcion_ia:
-    motor_elegido = 'gemini-2.5-flash'  # 🌟 Actualizado al motor correcto
+    motor_elegido = 'gemini-1.5-flash'  # 🌟 Motor universal garantizado
 else:
-    motor_elegido = 'gemini-2.5-pro'
+    motor_elegido = 'gemini-1.5-pro'    # 🌟 Motor avanzado universal
 
 st.divider()
 
