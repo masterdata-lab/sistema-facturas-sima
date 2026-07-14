@@ -36,8 +36,14 @@ def inicializar_ia():
 ia_client = inicializar_ia()
 
 def llamar_puente(payload):
-    payload["token"] = st.secrets["TOKEN_SEGURIDAD"]
     headers = {'Content-Type': 'application/json'}
+    
+    # 🔒 Inyectamos la contraseña en cada envío
+    try:
+        payload["token"] = st.secrets["TOKEN_SEGURIDAD"]
+    except Exception:
+        raise Exception("Falta configurar TOKEN_SEGURIDAD en los Secrets.")
+        
     sesion = requests.Session()
     adapter = requests.adapters.HTTPAdapter(max_retries=3)
     sesion.mount('https://', adapter)
@@ -52,9 +58,10 @@ def llamar_puente(payload):
             return datos
         else: 
             raise Exception(datos.get("message"))
-    except Exception:
-        raise Exception(f"El puente devolvió un error (HTML): {respuesta.text[:150]}")
-
+    except ValueError:
+        # Atrapa el error si Google manda HTML en vez de JSON
+        raise Exception(f"Google rechazó la conexión. Revisá que hayas hecho una 'Nueva Implementación' en Apps Script.")
+        
 def subir_archivo(nombre, bytes_data, carpeta_id):
     b64_data = base64.b64encode(bytes_data).decode('utf-8')
     res = llamar_puente({"accion": "subir_pdf", "folderId": carpeta_id, "filename": nombre, "fileData": b64_data})
@@ -189,13 +196,13 @@ st.markdown("### ⚙️ Configuración del Motor")
 opcion_ia = st.selectbox(
     "Seleccionar Inteligencia Artificial:",
     options=[
-        "Gemini 1.5 Flash (Súper Rápido - Facturas Clásicas)",
-        "Gemini 2.5 Pro (Alta Precisión - OTs complejas y fotos)"
+        "Gemini 2.5 Flash (Gratuito y Rápido - Facturas Clásicas)",
+        "Gemini 2.5 Pro (Requiere Facturación - OTs complejas y fotos)"
     ]
 )
 
 if "Flash" in opcion_ia:
-    motor_elegido = 'gemini-1.5-flash'
+    motor_elegido = 'gemini-2.5-flash'  # 🌟 Actualizado al motor correcto
 else:
     motor_elegido = 'gemini-2.5-pro'
 
