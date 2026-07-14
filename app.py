@@ -93,7 +93,7 @@ def unificar_documentos(factura_bytes, ot_bytes=None, ot_es_imagen=False):
     salida.seek(0)
     return salida.getvalue()
 
-def extraer_datos_ia(pdf_bytes):
+def extraer_datos_ia(pdf_bytes, modelo_elegido):
     prompt = """
     Extraé los datos de esta factura/OT y devolvelos en JSON estricto.
     Formato JSON:
@@ -106,20 +106,20 @@ def extraer_datos_ia(pdf_bytes):
     """
     doc = types.Part.from_bytes(data=pdf_bytes, mime_type="application/pdf")
     resp = ia_client.models.generate_content(
-        model='gemini-1.5-flash',
+        model=modelo_elegido,
         contents=[doc, prompt],
         config=types.GenerateContentConfig(response_mime_type="application/json")
     )
     return json.loads(resp.text)
 
-def procesar_archivos(fac_file, ot_file):
+def procesar_archivos(fac_file, ot_file, modelo_ia):
     ot_bytes = ot_file.getvalue() if ot_file else None
     ot_img = ot_file.type.startswith("image/") if ot_file else False
     pdf_final = unificar_documentos(fac_file.getvalue(), ot_bytes, ot_img)
     
     with st.spinner("Analizando documento con IA..."):
         try:
-            datos = extraer_datos_ia(pdf_final)
+            datos = extraer_datos_ia(pdf_final, modelo_ia)
         except Exception as e:
             id_err = f"ERR_{int(datetime.now().timestamp())}"
             mensaje_limpio = re.sub(r'[^\w\s\-\.]', '', str(e))[:100]
@@ -181,6 +181,26 @@ def procesar_archivos(fac_file, ot_file):
 
     st.success(f"¡Factura de {alias_prov} procesada y guardada con éxito!")
 
+# ==========================================
+# 4. INTERFAZ (UI)
+# ==========================================
+st.markdown("### ⚙️ Configuración del Motor")
+
+opcion_ia = st.selectbox(
+    "Seleccionar Inteligencia Artificial:",
+    options=[
+        "Gemini 1.5 Flash (Súper Rápido - Facturas Clásicas)",
+        "Gemini 2.5 Pro (Alta Precisión - OTs complejas y fotos)"
+    ]
+)
+
+if "Flash" in opcion_ia:
+    motor_elegido = 'gemini-1.5-flash'
+else:
+    motor_elegido = 'gemini-2.5-pro'
+
+st.divider()
+
 st.markdown("### 📤 Carga de Documentos")
 col1, col2 = st.columns(2)
 with col1:
@@ -192,4 +212,4 @@ if st.button("🚀 Procesar Comprobantes", type="primary"):
     if not archivo_factura:
         st.error("Debes subir al menos la factura para continuar.")
     else:
-        procesar_archivos(archivo_factura, archivo_ot)
+        procesar_archivos(archivo_factura, archivo_ot, motor_elegido)
