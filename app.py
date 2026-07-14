@@ -36,6 +36,7 @@ def inicializar_ia():
 ia_client = inicializar_ia()
 
 def llamar_puente(payload):
+    payload["token"] = st.secrets["TOKEN_SEGURIDAD"]
     headers = {'Content-Type': 'application/json'}
     sesion = requests.Session()
     adapter = requests.adapters.HTTPAdapter(max_retries=3)
