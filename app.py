@@ -62,9 +62,20 @@ def llamar_puente(payload):
         # Atrapa el error si Google manda HTML en vez de JSON
         raise Exception(f"Google rechazó la conexión. Revisá que hayas hecho una 'Nueva Implementación' en Apps Script.")
         
-def subir_archivo(nombre, bytes_data, carpeta_id):
+def subir_archivo(nombre, bytes_data, carpeta_id, subcarpeta_prov=None):
     b64_data = base64.b64encode(bytes_data).decode('utf-8')
-    res = llamar_puente({"accion": "subir_pdf", "folderId": carpeta_id, "filename": nombre, "fileData": b64_data})
+    payload = {
+        "accion": "subir_pdf", 
+        "folderId": carpeta_id, 
+        "filename": nombre, 
+        "fileData": b64_data
+    }
+    
+    # Si le enviamos una subcarpeta, la agrega al paquete de datos
+    if subcarpeta_prov:
+        payload["subcarpetaProveedor"] = subcarpeta_prov
+        
+    res = llamar_puente(payload)
     return res["link"]
 
 def escribir_fila(hoja_nombre, fila):
@@ -132,7 +143,8 @@ def procesar_archivos(fac_file, ot_file, modelo_ia):
             mensaje_limpio = re.sub(r'[^\w\s\-\.\/]', '', str(e))[:100]
             txt_final = f"Error IA: {mensaje_limpio}"
             
-            link = subir_archivo(f"ERROR_{id_err}.pdf", pdf_final, ID_DRIVE_RAIZ)
+            # 📁 Lo manda a la carpeta REVISION
+            link = subir_archivo(f"ERROR_{id_err}.pdf", pdf_final, ID_DRIVE_RAIZ, "REVISION")
             escribir_fila(H_REVIS, [id_err, "Desc", "S/N", txt_final, link])
             st.error("Documento ilegible. Enviado a REVISION.")
             return
@@ -149,26 +161,30 @@ def procesar_archivos(fac_file, ot_file, modelo_ia):
     
     try:
         fecha_dt = datetime.strptime(datos.get("fecha", "01/01/2000"), "%d/%m/%Y")
+        fecha_iso = fecha_dt.strftime("%Y-%m-%d") # 🌟 Formato YYYY-MM-DD para ordenar carpetas
         mes_txt = f"{str(fecha_dt.month).zfill(2)}-{['ENE','FEB','MAR','ABR','MAY','JUN','JUL','AGO','SEP','OCT','NOV','DIC'][fecha_dt.month-1]}"
         anio = fecha_dt.year
     except:
-        mes_txt, anio = "00-IND", datetime.now().year
+        fecha_iso, mes_txt, anio = "0000-00-00", "00-IND", datetime.now().year
 
     with st.spinner("Comprobando duplicados en la base de datos..."):
         ids_general = obtener_valores_columna(H_GENERAL, 1)
         
     if id_unico in ids_general:
         st.warning("Comprobante duplicado detectado. Registrando...")
-        link_nuevo = subir_archivo(f"DUP_{id_unico}.pdf", pdf_final, ID_DRIVE_RAIZ)
+        # 📁 Lo manda a la carpeta DUPLICADOS
+        link_nuevo = subir_archivo(f"DUP_{fecha_iso}_{num_completo}.pdf", pdf_final, ID_DRIVE_RAIZ, "DUPLICADOS")
         escribir_fila(H_DUPLI, [id_unico, alias_prov, num_completo, datetime.now().strftime("%d/%m/%Y"), "Comprobante duplicado.", "", link_nuevo])
         st.warning("Registrado en pestaña DUPLICADOS.")
         return
 
+    # 🌟 Nomenclatura limpia: YYYY-MM-DD_0001-12345678_$15000.pdf
     suf = "_OT" if ot_file else ""
-    nombre_pdf = f"{alias_prov}_{cuit_prov}_{patente}_{int(total)}{suf}.pdf"
+    nombre_pdf = f"{fecha_iso}_{num_completo}_${int(total)}{suf}.pdf"
     
     with st.spinner("Subiendo PDF unificado a Google Drive..."):
-        link_drive = subir_archivo(nombre_pdf, pdf_final, ID_DRIVE_RAIZ)
+        # 📁 Lo manda a la carpeta del proveedor correspondiente
+        link_drive = subir_archivo(nombre_pdf, pdf_final, ID_DRIVE_RAIZ, alias_prov)
 
     with st.spinner("Registrando datos en las hojas de cálculo..."):
         escribir_fila(H_GENERAL, [id_unico, anio, mes_txt, datos.get("fecha"), patente, alias_prov, datos.get("razon_social"), pv, num, num_completo, datos.get("subtotal", 0), total, f'=HYPERLINK("{link_drive}", "Ver PDF")'])
