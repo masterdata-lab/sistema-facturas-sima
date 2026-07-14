@@ -129,7 +129,7 @@ def procesar_archivos(fac_file, ot_file, modelo_ia):
             datos = extraer_datos_ia(pdf_final, modelo_ia)
         except Exception as e:
             id_err = f"ERR_{int(datetime.now().timestamp())}"
-            mensaje_limpio = re.sub(r'[^\w\s\-\.]', '', str(e))[:100]
+            mensaje_limpio = re.sub(r'[^\w\s\-\.\/]', '', str(e))[:100]
             txt_final = f"Error IA: {mensaje_limpio}"
             
             link = subir_archivo(f"ERROR_{id_err}.pdf", pdf_final, ID_DRIVE_RAIZ)
