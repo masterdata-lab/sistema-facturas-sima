@@ -161,7 +161,7 @@ def procesar_archivos(fac_file, ot_file, modelo_ia):
     
     try:
         fecha_dt = datetime.strptime(datos.get("fecha", "01/01/2000"), "%d/%m/%Y")
-        fecha_iso = fecha_dt.strftime("%Y-%m-%d") # 🌟 Formato YYYY-MM-DD para ordenar carpetas
+        fecha_iso = fecha_dt.strftime("%Y-%m-%d") # Formato YYYY-MM-DD para ordenar carpetas
         mes_txt = f"{str(fecha_dt.month).zfill(2)}-{['ENE','FEB','MAR','ABR','MAY','JUN','JUL','AGO','SEP','OCT','NOV','DIC'][fecha_dt.month-1]}"
         anio = fecha_dt.year
     except:
@@ -178,9 +178,10 @@ def procesar_archivos(fac_file, ot_file, modelo_ia):
         st.warning("Registrado en pestaña DUPLICADOS.")
         return
 
-    # 🌟 Nomenclatura limpia: YYYY-MM-DD_0001-12345678_$15000.pdf
+    # 🌟 Nomenclatura nueva: Sin $, centavos separados por _
+    total_formateado = f"{total:.2f}".replace('.', '_')
     suf = "_OT" if ot_file else ""
-    nombre_pdf = f"{fecha_iso}_{num_completo}_${int(total)}{suf}.pdf"
+    nombre_pdf = f"{fecha_iso}_{num_completo}_{total_formateado}{suf}.pdf"
     
     with st.spinner("Subiendo PDF unificado a Google Drive..."):
         # 📁 Lo manda a la carpeta del proveedor correspondiente
@@ -203,7 +204,6 @@ def procesar_archivos(fac_file, ot_file, modelo_ia):
             escribir_fila(H_PROV, [alias_prov, datos.get("razon_social"), cuit_prov])
 
     st.success(f"¡Factura de {alias_prov} procesada y guardada con éxito!")
-
 # ==========================================
 # 4. INTERFAZ (UI)
 # ==========================================
