@@ -1,5 +1,6 @@
 import streamlit as st
 import json
+import time
 import re
 import io
 from PIL import Image
@@ -171,9 +172,19 @@ else:
         with col7:
             total = st.number_input("Total Final (Con Impuestos)", value=float(suma_total_con_imp), step=100.0)
         
+       # ... (Todo el código anterior queda igual hasta la línea de "st.write('---')")
+        
         st.write("---")
         
-        if st.button("✅ Confirmar y Aprobar Factura", type="primary", use_container_width=True):
+        # 🌟 NUEVO: Botones divididos para Aprobar o Descartar
+        col_btn_aprob, col_btn_desc = st.columns(2)
+        
+        with col_btn_aprob:
+            btn_aprobar = st.button("✅ Confirmar y Aprobar", type="primary", use_container_width=True)
+        with col_btn_desc:
+            btn_descartar = st.button("🗑️ Descartar Comprobante", type="secondary", use_container_width=True, help="Envía este documento a la papelera si es ilegible o incorrecto.")
+        
+        if btn_aprobar:
             with st.spinner("Guardando en la contabilidad definitiva..."):
                 alias_prov = limpiar_nombre(razon_social)
                 num_completo = f"{str(pv).zfill(5)}-{str(num).zfill(8)}"
@@ -206,7 +217,6 @@ else:
                     if not pat_item or pat_item == "NONE": pat_item = "DPA"
                     patentes_usadas.add(pat_item)
                     
-                    # 🌟 INYECCIÓN EN GOOGLE SHEETS: En la columna 10 que estaba vacía (""), ahora guardamos el tipo_gasto
                     for _ in range(cant): 
                         filas_detalle.append([
                             id_unico, anio, mes_txt, fecha, alias_prov, razon_social, num_completo, nro_ot, pat_item, 
@@ -227,4 +237,13 @@ else:
                 actualizar_estado_carga(H_PENDIENTES, id_carga, "APROBADA")
                 
                 st.success("✅ ¡Factura aprobada y registrada en contabilidad exitosamente!")
+                time.sleep(1)
+                st.rerun()
+
+        # 🌟 NUEVO: Lógica de la papelera
+        if btn_descartar:
+            with st.spinner("Enviando a la papelera..."):
+                actualizar_estado_carga(H_PENDIENTES, id_carga, "DESCARTADO")
+                st.warning("🗑️ Comprobante descartado correctamente. Pasando al siguiente...")
+                time.sleep(1.5)
                 st.rerun()
