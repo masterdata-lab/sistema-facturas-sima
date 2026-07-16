@@ -54,8 +54,8 @@ def subir_a_bandeja(fac_file, ot_file, motor_ia, indice, total_archivos):
             fecha_ahora,
             fac_file.name,
             ot_file.name if ot_file else "SIN OT",
-            f'=HYPERLINK("{link_fac}", "Ver Factura")',
-            f'=HYPERLINK("{link_ot}", "Ver OT")' if link_ot else "N/A",
+            link_fac,                     # 🌟 Link puro (Sin Hyperlink)
+            link_ot if link_ot else "N/A", # 🌟 Link puro de la OT
             "PENDIENTE",
             motor_ia
         ]
