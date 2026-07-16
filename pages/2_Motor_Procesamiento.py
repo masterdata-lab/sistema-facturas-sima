@@ -17,7 +17,7 @@ try:
 except:
     H_PENDIENTES = "PENDIENTES"
 
-# 🌟 LISTA MAESTRA TEMPORAL (Hasta que armemos el módulo de configuración)
+# Lista maestra de categorías
 CATEGORIAS_GASTO = [
     "BATERIAS", "CHAP PINT", "DOCUMENTACION", "EXTINTORES", "FILTROS Y FLUIDOS", 
     "GOMERIA", "MANTENIMIENTO CORRECTIVO", "MANTENIMIENTO PREVENTIVO", "NEUMATICOS", 
@@ -66,10 +66,8 @@ def procesar_con_ia_y_reintentos(pdf_bytes, modelo_elegido, max_reintentos=5):
             return json.loads(resp.text)
         except Exception as e:
             error_str = str(e)
-            # 🌟 MEJORA: Detectamos si es saturación (503) o límite de cuota (429)
             if "503" in error_str or "429" in error_str or "UNAVAILABLE" in error_str or "quota" in error_str.lower():
                 if intento < max_reintentos - 1:
-                    # Si es error de cuota 429, esperamos 30 segundos en lugar de 10 para dejar respirar a la API
                     tiempo_espera = 30 if "429" in error_str or "quota" in error_str.lower() else 10
                     time.sleep(tiempo_espera)
                     continue
@@ -79,16 +77,25 @@ st.markdown("## ⚙️ Motor de Procesamiento (IA)")
 st.markdown("Este módulo lee la cola de archivos pendientes, procesa los datos con Gemini y los prepara para la auditoría humana.")
 st.divider()
 
+# 🌟 NUEVA OPCIÓN: Permite rescatar los que fallaron antes
+reprocesar_fallidos = st.checkbox("🔄 Intentar reprocesar también los archivos que dieron error anteriormente", value=True)
+
 if st.button("▶️ Iniciar Procesamiento Automático", type="primary"):
     with st.spinner("Buscando facturas en la cola..."):
         datos_cola = leer_hoja_completa(H_PENDIENTES)
     
-    pendientes = [fila for fila in datos_cola[1:] if len(fila) >= 7 and fila[6] == "PENDIENTE"]
+    # Filtramos la cola aplicando la nueva regla de negocio
+    pendientes = []
+    for fila in datos_cola[1:]:
+        if len(fila) >= 7:
+            estado = fila[6]
+            if estado == "PENDIENTE" or (reprocesar_fallidos and estado.startswith("ERROR_IA")):
+                pendientes.append(fila)
     
     if not pendientes:
-        st.info("✅ No hay facturas pendientes en la cola.")
+        st.info("✅ No hay facturas pendientes de procesamiento.")
     else:
-        st.success(f"Encontradas {len(pendientes)} facturas pendientes. Iniciando motor...")
+        st.success(f"Encontradas {len(pendientes)} facturas para procesar. Iniciando motor...")
         
         barra_general = st.progress(0)
         status_text = st.empty()
@@ -120,7 +127,8 @@ if st.button("▶️ Iniciar Procesamiento Automático", type="primary"):
                 actualizar_estado_carga(H_PENDIENTES, id_carga, "PARA_AUDITAR", json_string)
                 
             except Exception as e:
-                actualizar_estado_carga(H_PENDIENTES, id_carga, f"ERROR_IA: {str(e)[:50]}")
+                # Si vuelve a fallar, anotamos el error detallado
+                actualizar_estado_carga(H_PENDIENTES, id_carga, f"ERROR_IA: {str(e)[:100]}")
                 
             barra_general.progress((i + 1) / len(pendientes))
             
