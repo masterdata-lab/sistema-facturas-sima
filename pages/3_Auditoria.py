@@ -1,4 +1,5 @@
 import streamlit as st
+import streamlit.components.v1 as components
 import json
 import base64
 import re
@@ -36,10 +37,13 @@ def asegurar_pdf(archivo):
         return pdf_bytes.getvalue()
     return archivo.getvalue()
 
-# 🌟 PARCHE DE SEGURIDAD PARA CHROME (Cambiamos iframe por embed)
-def mostrar_pdf(base64_pdf):
-    pdf_display = f'<embed src="data:application/pdf;base64,{base64_pdf}" width="100%" height="800" type="application/pdf">'
-    st.markdown(pdf_display, unsafe_allow_html=True)
+# 🌟 NUEVA FUNCIÓN DE PDF: Usa componentes aislados para evitar el bloqueo de Chrome
+def mostrar_pdf(pdf_bytes):
+    base64_pdf = base64.b64encode(pdf_bytes).decode('utf-8')
+    html_string = f'''
+        <iframe src="data:application/pdf;base64,{base64_pdf}" width="100%" height="800px" style="border: none;"></iframe>
+    '''
+    components.html(html_string, height=800)
 
 st.markdown("## ⚖️ Módulo de Auditoría Humana")
 st.markdown("Revisá los comprobantes procesados por la IA, corregí los datos si es necesario y aprobalos para la contabilidad final.")
@@ -77,67 +81,79 @@ else:
         st.markdown("### 📄 Documento Original")
         id_drive = extraer_id_drive(link_fac)
         if id_drive:
-            with st.spinner("Cargando documento..."):
-                pdf_bytes = descargar_archivo(id_drive)
-                if pdf_bytes:
-                    base64_pdf = base64.b64encode(pdf_bytes).decode('utf-8')
-                    mostrar_pdf(base64_pdf)
-                else:
-                    st.error("No se pudo descargar el PDF de Google Drive.")
+            pdf_bytes = descargar_archivo(id_drive)
+            if pdf_bytes:
+                # Botón de rescate si Chrome sigue poniéndose estricto
+                st.download_button("⬇️ Descargar PDF (Si no se visualiza abajo)", data=pdf_bytes, file_name="comprobante.pdf", mime="application/pdf")
+                mostrar_pdf(pdf_bytes)
+            else:
+                st.error("No se pudo descargar el PDF de Google Drive.")
     
     with col_datos:
         st.markdown("### 📝 Formulario de Validación")
-        with st.form("form_auditoria"):
+        
+        # 🌟 BOTÓN DE RESETEO
+        if st.button("🔄 Restablecer Datos Originales (IA)"):
+            for key in list(st.session_state.keys()):
+                del st.session_state[key]
+            st.rerun()
             
-            st.markdown("#### Datos del Proveedor")
-            cuit = st.text_input("CUIT Proveedor", value=datos_ia.get("cuit_proveedor", ""))
-            razon_social = st.text_input("Razón Social", value=datos_ia.get("razon_social", ""))
+        st.markdown("#### Datos del Proveedor")
+        cuit = st.text_input("CUIT Proveedor", value=datos_ia.get("cuit_proveedor", ""))
+        razon_social = st.text_input("Razón Social", value=datos_ia.get("razon_social", ""))
+        
+        st.markdown("#### Datos del Comprobante")
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            fecha = st.text_input("Fecha (DD/MM/YYYY)", value=datos_ia.get("fecha", ""))
+        with col2:
+            pv = st.text_input("Punto de Venta", value=str(datos_ia.get("punto_venta", "0")))
+        with col3:
+            num = st.text_input("Nro Factura", value=str(datos_ia.get("nro_factura", "0")))
+        
+        patente_ia = datos_ia.get("patente", "")
+        if not patente_ia or patente_ia.upper() == "SIN_PATENTE":
+            patente_ia = "DPA"
             
-            st.markdown("#### Datos del Comprobante")
-            col1, col2, col3 = st.columns(3)
-            with col1:
-                fecha = st.text_input("Fecha (DD/MM/YYYY)", value=datos_ia.get("fecha", ""))
-            with col2:
-                pv = st.text_input("Punto de Venta", value=str(datos_ia.get("punto_venta", "0")))
-            with col3:
-                num = st.text_input("Nro Factura", value=str(datos_ia.get("nro_factura", "0")))
+        st.markdown("#### 🔗 Vinculación")
+        col4, col5 = st.columns(2)
+        with col4:
+            patente = st.text_input("Patente asignada", value=patente_ia.upper())
+        with col5:
+            nro_ot = st.text_input("Nro de OT", value=datos_ia.get("nro_ot", ""))
+        
+        nueva_ot = st.file_uploader("📎 Adjuntar archivo de OT (Si faltó subirla)", type=["pdf", "png", "jpg", "jpeg"])
+        
+        st.markdown("#### Ítems de la Factura (Cálculo en vivo)")
+        # Al editar esta tabla, se recalcula todo al instante
+        items_editados = st.data_editor(datos_ia.get("items", [{"descripcion": "", "cantidad": 1, "precio_unitario": 0.0}]), num_rows="dynamic", width='stretch')
+        
+        # 🌟 CÁLCULO MATEMÁTICO EN TIEMPO REAL
+        try:
+            suma_items = sum(float(item.get("cantidad", 1)) * float(item.get("precio_unitario", 0)) for item in items_editados)
+        except:
+            suma_items = 0.0
             
-            patente_ia = datos_ia.get("patente", "")
-            if not patente_ia or patente_ia.upper() == "SIN_PATENTE":
-                patente_ia = "DPA"
-                
-            st.markdown("#### 🔗 Vinculación")
-            col4, col5 = st.columns(2)
-            with col4:
-                patente = st.text_input("Patente asignada", value=patente_ia.upper())
-            with col5:
-                nro_ot = st.text_input("Nro de OT", value=datos_ia.get("nro_ot", ""))
-            
-            # 🌟 NUEVO: Adjuntar OT retroactivamente
-            nueva_ot = st.file_uploader("📎 Adjuntar archivo de OT (Si faltó subirla)", type=["pdf", "png", "jpg", "jpeg"])
-            
-            st.markdown("#### Ítems de la Factura (Editables)")
-            items_editados = st.data_editor(datos_ia.get("items", [{"descripcion": "", "cantidad": 1, "precio_unitario": 0.0}]), num_rows="dynamic", use_container_width=True)
-            
-            st.markdown("#### Totales Generales")
-            col6, col7 = st.columns(2)
-            with col6:
-                subtotal = st.number_input("Subtotal (Neto)", value=float(datos_ia.get("subtotal", 0.0)), step=100.0)
-            with col7:
-                total = st.number_input("Total Final (Con Impuestos)", value=float(datos_ia.get("total", 0.0)), step=100.0)
-            
-            aprobado = st.form_submit_button("✅ Confirmar y Aprobar Factura", type="primary", use_container_width=True)
-            
-        if aprobado:
+        st.markdown("#### Totales Generales")
+        st.caption("Los montos se igualan automáticamente a la sumatoria de ítems. Podés sobrescribirlos si hay impuestos.")
+        
+        col6, col7 = st.columns(2)
+        with col6:
+            subtotal = st.number_input("Subtotal (Neto)", value=float(suma_items), step=100.0)
+        with col7:
+            total = st.number_input("Total Final (Con Impuestos)", value=float(suma_items), step=100.0)
+        
+        st.write("---")
+        
+        # 🌟 BOTÓN DE APROBACIÓN (Fuera del form)
+        if st.button("✅ Confirmar y Aprobar Factura", type="primary"):
             with st.spinner("Guardando en la contabilidad definitiva..."):
                 alias_prov = limpiar_nombre(razon_social)
                 num_completo = f"{str(pv).zfill(5)}-{str(num).zfill(8)}"
                 id_unico = f"{cuit}_{pv}_{num}"
                 
-                # Procesar la nueva OT si se subió
                 if nueva_ot:
                     ot_bytes = asegurar_pdf(nueva_ot)
-                    # La subimos a la carpeta del proveedor
                     link_nueva_ot = subir_archivo(f"{num_completo}_OT.pdf", ot_bytes, ID_DRIVE_RAIZ, alias_prov)
                 
                 try:
