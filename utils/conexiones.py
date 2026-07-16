@@ -115,3 +115,32 @@ def unificar_documentos(pdf_fac_bytes, ot_bytes=None, ot_es_imagen=False):
 def limpiar_nombre(texto):
     limpio = re.sub(r'[^a-zA-Z0-9\s]', '', str(texto))
     return " ".join(limpio.split())[:30].upper()
+
+# 🔍 Leer toda la hoja
+def leer_hoja_completa(hoja_nombre):
+    res = llamar_puente({
+        "accion": "leer_hoja", 
+        "sheetId": ID_GSHEET, 
+        "hojaNombre": hoja_nombre
+    })
+    return res.get("datos", [])
+
+# ⬇️ Descargar archivo de Drive
+def descargar_archivo(file_id):
+    res = llamar_puente({
+        "accion": "descargar_pdf", 
+        "fileId": file_id
+    })
+    b64_data = res.get("fileData", "")
+    return base64.b64decode(b64_data) if b64_data else None
+
+# 🔄 Actualizar Estado de Procesamiento
+def actualizar_estado_carga(hoja_nombre, id_carga, nuevo_estado, json_extraido=None):
+    llamar_puente({
+        "accion": "actualizar_estado_carga", 
+        "sheetId": ID_GSHEET, 
+        "hojaNombre": hoja_nombre,
+        "idCarga": id_carga,
+        "nuevoEstado": nuevo_estado,
+        "jsonExtraido": json_extraido
+    })
