@@ -19,9 +19,11 @@ except:
 
 ia_client = obtener_cliente_gemini()
 
-def extraer_id_drive(url_hyperlink):
-    # Busca el ID dentro de la URL de Drive
-    match = re.search(r'/d/([a-zA-Z0-9_-]+)', url_hyperlink)
+def extraer_id_drive(url_drive):
+    # 🌟 Busca el ID soportando múltiples formatos de Google Drive (/d/ o ?id=)
+    if not url_drive or url_drive == "N/A":
+        return None
+    match = re.search(r'(?:/d/|id=)([a-zA-Z0-9_-]+)', url_drive)
     return match.group(1) if match else None
 
 def procesar_con_ia_y_reintentos(pdf_bytes, modelo_elegido, max_reintentos=5):
