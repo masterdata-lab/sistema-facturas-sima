@@ -35,7 +35,6 @@ def asegurar_pdf(archivo):
         return pdf_bytes.getvalue()
     return archivo.getvalue()
 
-# Función de seguridad para convertir números aunque estén vacíos
 def safe_float(valor, por_defecto=0.0):
     try:
         if valor is None or str(valor).strip().lower() == "none" or str(valor).strip() == "":
@@ -112,7 +111,6 @@ else:
         with col3:
             num = st.text_input("Nro Factura", value=str(datos_ia.get("nro_factura", "0")))
         
-        # Procesamos la patente general para inyectarla en los ítems
         patente_ia = datos_ia.get("patente", "")
         if not patente_ia or patente_ia.upper() == "SIN_PATENTE":
             patente_ia = "DPA"
@@ -122,38 +120,53 @@ else:
         nueva_ot = st.file_uploader("📎 Adjuntar archivo de OT (Si faltó subirla)", type=["pdf", "png", "jpg", "jpeg"])
         
         st.markdown("#### Ítems de la Factura (Patentes y Montos)")
-        st.caption("Podés asignar una patente distinta a cada ítem si corresponde.")
+        st.caption("Podés asignar patentes y desglosar precios con/sin impuestos por ítem.")
         
-        # Preparamos los ítems inyectándoles la patente de la IA si no la tienen
+        # Mapeo y retrocompatibilidad para facturas viejas procesadas sin doble precio
         items_precargados = datos_ia.get("items", [])
         if not items_precargados:
-            items_precargados = [{"patente": patente_ia.upper(), "descripcion": "", "cantidad": 1, "precio_unitario": 0.0}]
+            items_precargados = [{"patente": patente_ia.upper(), "descripcion": "", "cantidad": 1, "precio_sin_impuestos": 0.0, "precio_con_impuestos": 0.0}]
         else:
             for it in items_precargados:
                 if "patente" not in it or not it["patente"]:
                     it["patente"] = patente_ia.upper()
+                if "precio_sin_impuestos" not in it:
+                    it["precio_sin_impuestos"] = safe_float(it.get("precio_unitario", 0.0))
+                if "precio_con_impuestos" not in it:
+                    it["precio_con_impuestos"] = safe_float(it.get("precio_unitario", 0.0))
 
+        # Mostramos el editor interactivo
         items_editados = st.data_editor(items_precargados, num_rows="dynamic")
         
-        # 🌟 MATEMÁTICA BLINDADA
-        suma_items = 0.0
+        # 🌟 DOBLE CÁLCULO EN VIVO (NETO VS BRUTO)
+        suma_neto = 0.0
+        suma_total_con_imp = 0.0
+        
         for item in items_editados:
             desc = str(item.get("descripcion", "")).strip()
             if not desc or desc.lower() == "none":
-                continue # Ignora filas vacías en el cálculo
+                continue
+                
             cant = safe_float(item.get("cantidad"), 1.0)
-            precio = safe_float(item.get("precio_unitario"), 0.0)
-            suma_items += cant * precio
+            p_neto = safe_float(item.get("precio_sin_impuestos"), 0.0)
+            p_total = safe_float(item.get("precio_con_impuestos"), 0.0)
             
-        st.success(f"🧮 **Sumatoria automática de los ítems de arriba:** ${suma_items:,.2f}".replace(",", "X").replace(".", ",").replace("X", "."))
+            suma_neto += cant * p_neto
+            suma_total_con_imp += cant * p_total
+            
+        # Formateo visual amigable para Argentina
+        fmt_neto = f"${suma_neto:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
+        fmt_total = f"${suma_total_con_imp:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
+        st.success(f"🧮 **Suma Neto (Subtotal):** {fmt_neto} | **Suma Total (Con Impuestos):** {fmt_total}")
             
         st.markdown("#### Totales Generales (Para asentar contablemente)")
         
         col6, col7 = st.columns(2)
         with col6:
-            subtotal = st.number_input("Subtotal (Neto)", value=float(datos_ia.get("subtotal", 0.0)), step=100.0)
+            # Sincronizamos los valores por defecto con las sumatorias vivas
+            subtotal = st.number_input("Subtotal (Neto)", value=float(suma_neto), step=100.0)
         with col7:
-            total = st.number_input("Total Final (Con Impuestos)", value=float(datos_ia.get("total", 0.0)), step=100.0)
+            total = st.number_input("Total Final (Con Impuestos)", value=float(suma_total_con_imp), step=100.0)
         
         st.write("---")
         
@@ -174,27 +187,30 @@ else:
                 except:
                     mes_txt, anio = "00-IND", datetime.now().year
 
-                # 🌟 PROCESAMIENTO DE ÍTEMS Y LIMPIEZA DE FILAS FANTASMAS
                 filas_detalle = []
                 patentes_usadas = set()
                 
                 for item in items_editados:
                     desc = str(item.get("descripcion", "")).strip()
                     if not desc or desc.lower() == "none":
-                        continue # Elimina filas basura para no ensuciar Google Sheets
+                        continue
                         
                     cant = int(safe_float(item.get("cantidad"), 1.0))
-                    precio_u = safe_float(item.get("precio_unitario"), 0.0)
+                    precio_neto_u = safe_float(item.get("precio_sin_impuestos"), 0.0)
+                    precio_total_u = safe_float(item.get("precio_con_impuestos"), 0.0)
                     
                     pat_item = str(item.get("patente", patente_ia)).strip().upper()
                     if not pat_item or pat_item == "NONE":
                         pat_item = "DPA"
                     patentes_usadas.add(pat_item)
                     
+                    # 🌟 GUARDAMOS: Col 13 (sin impuestos) y Col 14 (con impuestos) por cada fila individual
                     for _ in range(cant): 
-                        filas_detalle.append([id_unico, anio, mes_txt, fecha, alias_prov, razon_social, num_completo, nro_ot, pat_item, "", desc, 1, precio_u, precio_u, f'=HYPERLINK("{link_fac}", "Ver PDF")'])
+                        filas_detalle.append([
+                            id_unico, anio, mes_txt, fecha, alias_prov, razon_social, num_completo, nro_ot, pat_item, "", 
+                            desc, 1, precio_neto_u, precio_total_u, f'=HYPERLINK("{link_fac}", "Ver PDF")'
+                        ])
                 
-                # Armamos un resumen de patentes para la hoja general
                 patente_general_resumen = " / ".join(patentes_usadas) if patentes_usadas else "DPA"
 
                 escribir_fila(H_GENERAL, [id_unico, anio, mes_txt, fecha, patente_general_resumen, alias_prov, razon_social, pv, num, num_completo, subtotal, total, f'=HYPERLINK("{link_fac}", "Ver PDF")'])
