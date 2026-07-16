@@ -49,9 +49,8 @@ def extraer_datos_ia(pdf_bytes, modelo_elegido):
     return json.loads(resp.text)
 
 def procesar_un_archivo(fac_file, ot_file, modelo_ia, indice, total_archivos):
-    # Envolvemos el contenido en un contenedor para que sea visualmente limpio en cargas masivas
     with st.container(border=True):
-        st.markdown(f"**📄 Procesando archivo {indice} de {total_archivos}:** `{fac_file.name}`")
+        st.markdown(f"**📄 Procesando {indice}/{total_archivos}:** `{fac_file.name}`")
         barra_progreso = st.progress(5, text="⏳ Iniciando conversión y preparación...")
         
         fac_bytes = asegurar_pdf(fac_file)
@@ -105,7 +104,7 @@ def procesar_un_archivo(fac_file, ot_file, modelo_ia, indice, total_archivos):
             link_nuevo = subir_archivo(f"DUP_{fecha_iso}_{num_completo}.pdf", pdf_final, ID_DRIVE_RAIZ, "DUPLICADOS")
             escribir_fila(H_DUPLI, [id_unico, alias_prov, num_completo, datetime.now().strftime("%d/%m/%Y"), "Comprobante duplicado.", "", link_nuevo])
             barra_progreso.empty()
-            st.warning("⚠️ Duplicado detectado y guardado en la pestaña correspondiente.")
+            st.warning("⚠️ Duplicado detectado y guardado.")
             return False
 
         total_formateado = f"{total:.2f}".replace('.', '_')
@@ -153,52 +152,73 @@ motor_elegido = 'gemini-3.5-flash' if "Flash" in opcion_ia else 'gemini-3.1-pro'
 
 st.divider()
 st.markdown("### 📤 Carga de Documentos")
-st.info("💡 **Tip:** Podés arrastrar una carpeta completa adentro del recuadro para subir todo su contenido de golpe.")
+st.info("💡 **Tip:** Podés arrastrar carpetas enteras o seleccionar múltiples archivos.")
 
-# UX: El toggle (interruptor) es más elegante que pestañas completas
 usar_camara = st.toggle("📸 Activar Cámara (Celular)")
 
-archivos_facturas_up = []
-archivo_ot_up = None
-archivo_fac_cam = None
-archivo_ot_cam = None
-
 if usar_camara:
+    # MODO CÁMARA (Procesa 1 factura y 1 OT a la vez)
     col_cam1, col_cam2 = st.columns(2)
     with col_cam1:
         archivo_fac_cam = st.camera_input("1. Foto de la Factura (Obligatorio)")
     with col_cam2:
         archivo_ot_cam = st.camera_input("2. Foto de la OT (Opcional)")
+        
+    st.divider()
+    st.warning("⚠️ **IMPORTANTE:** Durante el procesamiento, NO bloquees la pantalla ni cierres el navegador web.")
+    if st.button("🚀 Procesar Comprobante", type="primary", use_container_width=True):
+        if not archivo_fac_cam:
+            st.error("❌ Debes tomar la foto de la factura para continuar.")
+        else:
+            procesar_un_archivo(archivo_fac_cam, archivo_ot_cam, motor_elegido, 1, 1)
+
 else:
+    # MODO CARGA MASIVA (Con vinculación manual de OTs)
     col_up1, col_up2 = st.columns(2)
     with col_up1:
-        # 🌟 AHORA ACEPTA MÚLTIPLES ARCHIVOS O CARPETAS ARRASTRADAS
         archivos_facturas_up = st.file_uploader("1. Factura/s *Obligatorio*", type=["pdf", "png", "jpg", "jpeg"], accept_multiple_files=True)
     with col_up2:
-        archivo_ot_up = st.file_uploader("2. Orden de Trabajo *Opcional*", type=["pdf", "png", "jpg", "jpeg"])
-        if len(archivos_facturas_up) > 1 and archivo_ot_up:
-            st.warning("⚠️ Estás subiendo varias facturas a la vez, pero solo una OT. Esta OT se adjuntará **únicamente a la primera factura** de la lista.")
+        archivos_ots_up = st.file_uploader("2. Orden/es de Trabajo *Opcional*", type=["pdf", "png", "jpg", "jpeg"], accept_multiple_files=True)
 
-# Armado final de las variables
-lista_facturas_final = archivos_facturas_up if not usar_camara else ([archivo_fac_cam] if archivo_fac_cam else [])
-ot_final = archivo_ot_up if not usar_camara else archivo_ot_cam
+    if archivos_facturas_up:
+        st.markdown("#### 🔗 Vincular Órdenes de Trabajo")
+        st.write("Seleccioná qué OT le corresponde a cada factura. Si no lleva, dejalo en 'Ninguna'.")
+        
+        # Armamos las opciones de OTs disponibles
+        opciones_ot = ["Ninguna"]
+        dict_ots = {}
+        if archivos_ots_up:
+            for ot in archivos_ots_up:
+                opciones_ot.append(ot.name)
+                dict_ots[ot.name] = ot
 
-st.divider()
-st.warning("⚠️ **IMPORTANTE:** Durante el procesamiento, NO bloquees la pantalla ni cierres el navegador web.")
+        # Lista para guardar las parejas finales (Factura, OT)
+        mapeo_archivos = []
 
-if st.button("🚀 Procesar Comprobantes", type="primary", use_container_width=True):
-    total_archivos = len(lista_facturas_final)
-    
-    if total_archivos == 0:
-        st.error("❌ Debes subir al menos una factura para continuar.")
-    else:
-        procesados_ok = 0
-        for i, fac_file in enumerate(lista_facturas_final):
-            # Solo pasamos la OT al primer archivo para evitar mezclar documentos en cargas masivas
-            ot_para_enviar = ot_final if i == 0 else None 
-            
-            exito = procesar_un_archivo(fac_file, ot_para_enviar, motor_elegido, i + 1, total_archivos)
-            if exito: procesados_ok += 1
-            
-        st.write("---")
-        st.success(f"🎉 Resumen: Se procesaron correctamente {procesados_ok} de {total_archivos} archivo/s.")
+        # Generamos la tabla visual para emparejar
+        for i, fac in enumerate(archivos_facturas_up):
+            col_f, col_o = st.columns([6, 4])
+            with col_f:
+                st.write(f"📄 **{fac.name}**")
+            with col_o:
+                ot_elegida = st.selectbox(
+                    "OT Correspondiente",
+                    options=opciones_ot,
+                    key=f"match_{i}_{fac.name}",
+                    label_visibility="collapsed"
+                )
+                ot_final = dict_ots.get(ot_elegida) # Será None si elige "Ninguna"
+                mapeo_archivos.append((fac, ot_final))
+        
+        st.divider()
+        st.warning("⚠️ **IMPORTANTE:** Durante el procesamiento masivo, NO bloquees la pantalla ni cierres el navegador web.")
+
+        if st.button("🚀 Procesar Lote Completo", type="primary", use_container_width=True):
+            procesados_ok = 0
+            total_archivos = len(mapeo_archivos)
+            for i, (fac_file, ot_file) in enumerate(mapeo_archivos):
+                exito = procesar_un_archivo(fac_file, ot_file, motor_elegido, i + 1, total_archivos)
+                if exito: procesados_ok += 1
+                
+            st.write("---")
+            st.success(f"🎉 Resumen: Se procesaron correctamente {procesados_ok} de {total_archivos} archivo/s.")
