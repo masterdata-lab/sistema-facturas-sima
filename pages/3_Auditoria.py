@@ -1,11 +1,12 @@
 import streamlit as st
-import streamlit.components.v1 as components
 import json
-import base64
 import re
 import io
 from PIL import Image
 from datetime import datetime
+
+# 🌟 LA SOLUCIÓN DEFINITIVA PARA CHROME
+from streamlit_pdf_viewer import pdf_viewer
 
 # Importaciones de la sala de máquinas
 from utils.conexiones import (
@@ -36,14 +37,6 @@ def asegurar_pdf(archivo):
         img.save(pdf_bytes, format="PDF")
         return pdf_bytes.getvalue()
     return archivo.getvalue()
-
-# 🌟 NUEVA FUNCIÓN DE PDF: Usa componentes aislados para evitar el bloqueo de Chrome
-def mostrar_pdf(pdf_bytes):
-    base64_pdf = base64.b64encode(pdf_bytes).decode('utf-8')
-    html_string = f'''
-        <iframe src="data:application/pdf;base64,{base64_pdf}" width="100%" height="800px" style="border: none;"></iframe>
-    '''
-    components.html(html_string, height=800)
 
 st.markdown("## ⚖️ Módulo de Auditoría Humana")
 st.markdown("Revisá los comprobantes procesados por la IA, corregí los datos si es necesario y aprobalos para la contabilidad final.")
@@ -83,16 +76,14 @@ else:
         if id_drive:
             pdf_bytes = descargar_archivo(id_drive)
             if pdf_bytes:
-                # Botón de rescate si Chrome sigue poniéndose estricto
-                st.download_button("⬇️ Descargar PDF (Si no se visualiza abajo)", data=pdf_bytes, file_name="comprobante.pdf", mime="application/pdf")
-                mostrar_pdf(pdf_bytes)
+                # 🌟 ACÁ MAGIA: pdf_viewer renderiza internamente sin que Chrome lo bloquee
+                pdf_viewer(input=pdf_bytes, width=700)
             else:
                 st.error("No se pudo descargar el PDF de Google Drive.")
     
     with col_datos:
         st.markdown("### 📝 Formulario de Validación")
         
-        # 🌟 BOTÓN DE RESETEO
         if st.button("🔄 Restablecer Datos Originales (IA)"):
             for key in list(st.session_state.keys()):
                 del st.session_state[key]
@@ -125,10 +116,8 @@ else:
         nueva_ot = st.file_uploader("📎 Adjuntar archivo de OT (Si faltó subirla)", type=["pdf", "png", "jpg", "jpeg"])
         
         st.markdown("#### Ítems de la Factura (Cálculo en vivo)")
-        # Al editar esta tabla, se recalcula todo al instante
         items_editados = st.data_editor(datos_ia.get("items", [{"descripcion": "", "cantidad": 1, "precio_unitario": 0.0}]), num_rows="dynamic", width='stretch')
         
-        # 🌟 CÁLCULO MATEMÁTICO EN TIEMPO REAL
         try:
             suma_items = sum(float(item.get("cantidad", 1)) * float(item.get("precio_unitario", 0)) for item in items_editados)
         except:
@@ -145,7 +134,6 @@ else:
         
         st.write("---")
         
-        # 🌟 BOTÓN DE APROBACIÓN (Fuera del form)
         if st.button("✅ Confirmar y Aprobar Factura", type="primary"):
             with st.spinner("Guardando en la contabilidad definitiva..."):
                 alias_prov = limpiar_nombre(razon_social)
