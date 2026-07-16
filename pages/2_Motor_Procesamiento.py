@@ -34,7 +34,6 @@ def extraer_id_drive(url_drive):
     return match.group(1) if match else None
 
 def procesar_con_ia_y_reintentos(pdf_bytes, modelo_elegido, max_reintentos=5):
-    # 🌟 IA AHORA CLASIFICA EL GASTO AUTOMÁTICAMENTE
     prompt = f"""
     Extraé los datos de esta factura/OT y devolvelos en JSON estricto.
     Para cada ítem, asigná obligatoriamente un "tipo_gasto" eligiendo ÚNICAMENTE de esta lista: {CATEGORIAS_GASTO}. Si no aplica ninguna, usá "VARIOS".
@@ -67,9 +66,12 @@ def procesar_con_ia_y_reintentos(pdf_bytes, modelo_elegido, max_reintentos=5):
             return json.loads(resp.text)
         except Exception as e:
             error_str = str(e)
-            if "503" in error_str or "UNAVAILABLE" in error_str or "quota" in error_str.lower():
+            # 🌟 MEJORA: Detectamos si es saturación (503) o límite de cuota (429)
+            if "503" in error_str or "429" in error_str or "UNAVAILABLE" in error_str or "quota" in error_str.lower():
                 if intento < max_reintentos - 1:
-                    time.sleep(10)
+                    # Si es error de cuota 429, esperamos 30 segundos en lugar de 10 para dejar respirar a la API
+                    tiempo_espera = 30 if "429" in error_str or "quota" in error_str.lower() else 10
+                    time.sleep(tiempo_espera)
                     continue
             raise e
 
