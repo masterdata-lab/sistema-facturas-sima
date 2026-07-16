@@ -17,6 +17,14 @@ try:
 except:
     H_PENDIENTES = "PENDIENTES"
 
+# 🌟 LISTA MAESTRA TEMPORAL (Hasta que armemos el módulo de configuración)
+CATEGORIAS_GASTO = [
+    "BATERIAS", "CHAP PINT", "DOCUMENTACION", "EXTINTORES", "FILTROS Y FLUIDOS", 
+    "GOMERIA", "MANTENIMIENTO CORRECTIVO", "MANTENIMIENTO PREVENTIVO", "NEUMATICOS", 
+    "PLOTEO", "RASTREO GPS", "REPUESTOS", "VARIOS", "VTV", "PEAJE", "LAVADO", 
+    "ESTACIONAMIENTO", "CAJA CHICA S.F."
+]
+
 ia_client = obtener_cliente_gemini()
 
 def extraer_id_drive(url_drive):
@@ -26,24 +34,26 @@ def extraer_id_drive(url_drive):
     return match.group(1) if match else None
 
 def procesar_con_ia_y_reintentos(pdf_bytes, modelo_elegido, max_reintentos=5):
-    # 🌟 NUEVO PROMPT: Extrae precio con y sin impuestos por ítem
-    prompt = """
+    # 🌟 IA AHORA CLASIFICA EL GASTO AUTOMÁTICAMENTE
+    prompt = f"""
     Extraé los datos de esta factura/OT y devolvelos en JSON estricto.
-    Asegurate de calcular o extraer para cada ítem el precio unitario sin impuestos (neto) y el precio unitario con impuestos (total con IVA/percepciones).
+    Para cada ítem, asigná obligatoriamente un "tipo_gasto" eligiendo ÚNICAMENTE de esta lista: {CATEGORIAS_GASTO}. Si no aplica ninguna, usá "VARIOS".
+    Calculá el precio unitario sin impuestos y con impuestos por ítem.
     Formato JSON:
-    {
+    {{
         "cuit_proveedor": "0000", "razon_social": "Nombre", "cuit_cliente": "000",
         "fecha": "DD/MM/YYYY", "punto_venta": 0, "nro_factura": 0, "patente": "",
         "subtotal": 0.0, "total": 0.0, "nro_ot": "",
         "items": [
-            {
+            {{
                 "descripcion": "Texto", 
                 "cantidad": 1.0, 
                 "precio_sin_impuestos": 0.0, 
-                "precio_con_impuestos": 0.0
-            }
+                "precio_con_impuestos": 0.0,
+                "tipo_gasto": "VARIOS"
+            }}
         ]
-    }
+    }}
     """
     doc = types.Part.from_bytes(data=pdf_bytes, mime_type="application/pdf")
     
