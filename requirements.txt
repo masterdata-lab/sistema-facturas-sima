@@ -1,5 +1,6 @@
 streamlit
 google-genai
-pypdf
-Pillow
 requests
+Pillow
+PyPDF2
+pandas
