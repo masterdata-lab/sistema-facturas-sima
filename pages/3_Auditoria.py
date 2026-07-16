@@ -1,11 +1,12 @@
 import streamlit as st
 import json
-import time
 import re
 import io
+import time
 from PIL import Image
 from datetime import datetime
 
+# Importaciones de la sala de máquinas
 from utils.conexiones import (
     leer_hoja_completa, descargar_archivo, actualizar_estado_carga,
     escribir_fila, escribir_multiples_filas, obtener_valores_columna, limpiar_nombre, subir_archivo,
@@ -19,7 +20,6 @@ try:
 except:
     H_PENDIENTES = "PENDIENTES"
 
-# 🌟 LA MISMA LISTA MAESTRA
 CATEGORIAS_GASTO = [
     "BATERIAS", "CHAP PINT", "DOCUMENTACION", "EXTINTORES", "FILTROS Y FLUIDOS", 
     "GOMERIA", "MANTENIMIENTO CORRECTIVO", "MANTENIMIENTO PREVENTIVO", "NEUMATICOS", 
@@ -52,29 +52,38 @@ st.markdown("## ⚖️ Módulo de Auditoría Humana")
 st.markdown("Revisá los comprobantes procesados, corregí los datos si es necesario y aprobalos para la contabilidad final.")
 st.divider()
 
-with st.spinner("Buscando facturas pendientes de auditoría..."):
+with st.spinner("Buscando facturas..."):
     datos_cola = leer_hoja_completa(H_PENDIENTES)
 
-para_auditar = [fila for fila in datos_cola[1:] if len(fila) >= 9 and fila[6] == "PARA_AUDITAR"]
+# 🌟 FILTRADO SEGURO: Traemos los "PARA_AUDITAR" y también los que tengan "ERROR_IA"
+para_auditar = []
+for fila in datos_cola[1:]:
+    if len(fila) >= 7:
+        estado = fila[6]
+        if estado == "PARA_AUDITAR" or estado.startswith("ERROR_IA"):
+            para_auditar.append(fila)
 
 if not para_auditar:
     st.success("🎉 ¡Excelente trabajo! No hay facturas pendientes de auditoría en este momento.")
 else:
-    st.info(f"📌 Tenés {len(para_auditar)} factura/s esperando revisión.")
+    st.info(f"📌 Tenés {len(para_auditar)} factura/s esperando revisión o con errores de procesamiento.")
     
-    opciones = {fila[0]: f"{fila[1]} - {fila[2]}" for fila in para_auditar}
+    opciones = {fila[0]: f"{fila[1]} - {fila[2]} ({'OK' if fila[6]=='PARA_AUDITAR' else '⚠️ ERROR'})" for fila in para_auditar}
     carga_seleccionada = st.selectbox("Seleccionar comprobante a auditar:", options=list(opciones.keys()), format_func=lambda x: opciones[x])
     
     fila_actual = next(f for f in para_auditar if f[0] == carga_seleccionada)
     id_carga = fila_actual[0]
     link_fac = fila_actual[4]
-    json_crudo = fila_actual[8]
+    estado_actual = fila_actual[6]
+    json_crudo = fila_actual[8] if len(fila_actual) >= 9 else ""
     
-    try:
-        datos_ia = json.loads(json_crudo)
-    except:
-        datos_ia = {}
-        st.error("Error al leer los datos de la IA. Revisá manualmente.")
+    # Inicialización de datos segura
+    datos_ia = {}
+    if json_crudo:
+        try:
+            datos_ia = json.loads(json_crudo)
+        except:
+            pass
 
     st.divider()
     
@@ -96,6 +105,10 @@ else:
     
     with col_datos:
         st.markdown("### 📝 Formulario de Validación")
+        
+        # 🌟 ADVERTENCIA DE ERROR
+        if estado_actual.startswith("ERROR_IA"):
+            st.warning(f"⚠️ **Atención:** La IA no pudo procesar este archivo automáticamente. Código: `{estado_actual}`. Por favor, ingresá los datos manualmente mirando el PDF de la izquierda.")
         
         if st.button("🔄 Restablecer Datos Originales (IA)", help="Borra tus ediciones y vuelve a cargar los datos que leyó la IA."):
             st.rerun()
@@ -128,6 +141,7 @@ else:
         
         items_precargados = datos_ia.get("items", [])
         if not items_precargados:
+            # Si la IA falló, le damos una fila en blanco limpia al auditor para empezar
             items_precargados = [{"patente": patente_ia.upper(), "descripcion": "", "cantidad": 1, "precio_sin_impuestos": 0.0, "precio_con_impuestos": 0.0, "tipo_gasto": "VARIOS"}]
         else:
             for it in items_precargados:
@@ -136,14 +150,12 @@ else:
                 if "precio_con_impuestos" not in it: it["precio_con_impuestos"] = safe_float(it.get("precio_unitario", 0.0))
                 if "tipo_gasto" not in it: it["tipo_gasto"] = "VARIOS"
 
-        # 🌟 CONFIGURACIÓN DE LA TABLA (Menú desplegable para categoría)
         items_editados = st.data_editor(
             items_precargados, 
             num_rows="dynamic",
             column_config={
                 "tipo_gasto": st.column_config.SelectboxColumn(
                     "Categoría",
-                    help="Clasificación contable del ítem",
                     options=CATEGORIAS_GASTO,
                     required=True,
                     default="VARIOS"
@@ -168,21 +180,17 @@ else:
         st.markdown("#### Totales Generales")
         col6, col7 = st.columns(2)
         with col6:
-            subtotal = st.number_input("Subtotal (Neto)", value=float(suma_neto), step=100.0)
+            subtotal = st.number_input("Subtotal (Neto)", value=float(datos_ia.get("subtotal", suma_neto)), step=100.0)
         with col7:
-            total = st.number_input("Total Final (Con Impuestos)", value=float(suma_total_con_imp), step=100.0)
-        
-       # ... (Todo el código anterior queda igual hasta la línea de "st.write('---')")
+            total = st.number_input("Total Final (Con Impuestos)", value=float(datos_ia.get("total", suma_total_con_imp)), step=100.0)
         
         st.write("---")
         
-        # 🌟 NUEVO: Botones divididos para Aprobar o Descartar
         col_btn_aprob, col_btn_desc = st.columns(2)
-        
         with col_btn_aprob:
             btn_aprobar = st.button("✅ Confirmar y Aprobar", type="primary", use_container_width=True)
         with col_btn_desc:
-            btn_descartar = st.button("🗑️ Descartar Comprobante", type="secondary", use_container_width=True, help="Envía este documento a la papelera si es ilegible o incorrecto.")
+            btn_descartar = st.button("🗑️ Descartar Comprobante", type="secondary", use_container_width=True)
         
         if btn_aprobar:
             with st.spinner("Guardando en la contabilidad definitiva..."):
@@ -235,15 +243,13 @@ else:
                     escribir_fila(H_PROV, [alias_prov, razon_social, cuit])
                 
                 actualizar_estado_carga(H_PENDIENTES, id_carga, "APROBADA")
-                
-                st.success("✅ ¡Factura aprobada y registrada en contabilidad exitosamente!")
+                st.success("✅ ¡Factura aprobada exitosamente!")
                 time.sleep(1)
                 st.rerun()
 
-        # 🌟 NUEVO: Lógica de la papelera
         if btn_descartar:
             with st.spinner("Enviando a la papelera..."):
                 actualizar_estado_carga(H_PENDIENTES, id_carga, "DESCARTADO")
-                st.warning("🗑️ Comprobante descartado correctamente. Pasando al siguiente...")
+                st.warning("🗑️ Comprobante descartado correctamente.")
                 time.sleep(1.5)
                 st.rerun()
