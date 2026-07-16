@@ -1,21 +1,29 @@
 import streamlit as st
 import io
-import time
 from PIL import Image
 from datetime import datetime
 
-# Importaciones de la sala de máquinas (Ya no importamos IA aquí)
+# Importaciones de la sala de máquinas
 from utils.conexiones import (
     subir_archivo, escribir_fila, ID_DRIVE_RAIZ
 )
 
 st.set_page_config(page_title="SIMA ERP | Carga Rápida", page_icon="⚡", layout="wide")
 
-# Intentamos traer el nombre de la hoja de forma segura
 try:
     H_PENDIENTES = st.secrets["HOJA_PENDIENTES"]
 except:
     H_PENDIENTES = "PENDIENTES"
+
+# 🌟 SISTEMA DE RESETEO SEGURO
+# Usamos session_state para obligar a Streamlit a limpiar las cajitas después de enviar
+if "reset_key" not in st.session_state:
+    st.session_state.reset_key = 0
+
+# Si venimos de un envío exitoso, mostramos el mensaje y lo borramos de la memoria
+if "mensaje_exito" in st.session_state:
+    st.success(st.session_state.mensaje_exito)
+    del st.session_state.mensaje_exito
 
 def asegurar_pdf(archivo):
     if archivo is None: return None
@@ -30,15 +38,16 @@ def asegurar_pdf(archivo):
 
 def subir_a_bandeja(fac_file, ot_file, motor_ia, indice, total_archivos):
     with st.container(border=True):
-        st.markdown(f"**📄 Enviando {indice}/{total_archivos}:** `{fac_file.name}`")
+        st.markdown(f"**📄 Enviando {indice}/{total_archivos}:** `{fac_file.name if hasattr(fac_file, 'name') else 'Foto'}`")
         barra_progreso = st.progress(10, text="⏳ Preparando archivos...")
         
         fac_bytes = asegurar_pdf(fac_file)
         ot_bytes = asegurar_pdf(ot_file) if ot_file else None
         
-        # Generamos un ID de carga único basado en la fecha y hora exacta
         id_carga = f"Q_{int(datetime.now().timestamp())}_{indice}"
         fecha_ahora = datetime.now().strftime("%d/%m/%Y %H:%M:%S")
+        nombre_fac = fac_file.name if hasattr(fac_file, 'name') else "Foto_Factura.pdf"
+        nombre_ot = ot_file.name if (ot_file and hasattr(ot_file, 'name')) else ("Foto_OT.pdf" if ot_file else "SIN OT")
 
         barra_progreso.progress(40, text="☁️ Subiendo Factura a la Bandeja de Drive...")
         link_fac = subir_archivo(f"PENDIENTE_FAC_{id_carga}.pdf", fac_bytes, ID_DRIVE_RAIZ, "1_BANDEJA_ENTRADA")
@@ -50,19 +59,12 @@ def subir_a_bandeja(fac_file, ot_file, motor_ia, indice, total_archivos):
 
         barra_progreso.progress(90, text="📝 Registrando en la cola de procesamiento...")
         fila_pendiente = [
-            id_carga,
-            fecha_ahora,
-            fac_file.name,
-            ot_file.name if ot_file else "SIN OT",
-            link_fac,                     # 🌟 Link puro (Sin Hyperlink)
-            link_ot if link_ot else "N/A", # 🌟 Link puro de la OT
-            "PENDIENTE",
-            motor_ia
+            id_carga, fecha_ahora, nombre_fac, nombre_ot,
+            link_fac, link_ot if link_ot else "N/A", "PENDIENTE", motor_ia
         ]
         escribir_fila(H_PENDIENTES, fila_pendiente)
 
         barra_progreso.empty()
-        st.success(f"✅ ¡Enviado a la bandeja exitosamente! ({fac_file.name})")
         return True
 
 # ==========================================
@@ -87,12 +89,14 @@ st.info("💡 **Tip:** Podés arrastrar carpetas enteras o seleccionar múltiple
 usar_camara = st.toggle("📸 Activar Cámara (Celular)")
 
 if usar_camara:
-    # MODO CÁMARA
-    col_cam1, col_cam2 = st.columns(2)
-    with col_cam1:
-        archivo_fac_cam = st.camera_input("1. Foto de la Factura (Obligatorio)")
-    with col_cam2:
-        archivo_ot_cam = st.camera_input("2. Foto de la OT (Opcional)")
+    # 🌟 MODO CÁMARA BLINDADO
+    # Solo mostramos la cámara de la OT si el usuario lo pide explícitamente
+    archivo_fac_cam = st.camera_input("1. Foto de la Factura (Obligatorio)", key=f"cam_fac_{st.session_state.reset_key}")
+    
+    con_ot = st.checkbox("📎 Quiero adjuntar además una foto de la Orden de Trabajo")
+    archivo_ot_cam = None
+    if con_ot:
+        archivo_ot_cam = st.camera_input("2. Foto de la OT", key=f"cam_ot_{st.session_state.reset_key}")
         
     st.write("")
     if st.button("🚀 Enviar a la Bandeja", type="primary", use_container_width=True):
@@ -100,14 +104,28 @@ if usar_camara:
             st.error("❌ Debes tomar la foto de la factura para continuar.")
         else:
             subir_a_bandeja(archivo_fac_cam, archivo_ot_cam, motor_elegido, 1, 1)
+            # Guardamos el mensaje, recargamos y limpiamos las cámaras
+            st.session_state.mensaje_exito = "✅ ¡Foto enviada a la bandeja exitosamente!"
+            st.session_state.reset_key += 1
+            st.rerun()
 
 else:
-    # MODO CARGA MASIVA
+    # 🌟 MODO CARGA MASIVA BLINDADO
     col_up1, col_up2 = st.columns(2)
     with col_up1:
-        archivos_facturas_up = st.file_uploader("1. Factura/s *Obligatorio*", type=["pdf", "png", "jpg", "jpeg"], accept_multiple_files=True)
+        archivos_facturas_up = st.file_uploader(
+            "1. Factura/s *Obligatorio*", 
+            type=["pdf", "png", "jpg", "jpeg"], 
+            accept_multiple_files=True,
+            key=f"up_fac_{st.session_state.reset_key}"
+        )
     with col_up2:
-        archivos_ots_up = st.file_uploader("2. Orden/es de Trabajo *Opcional*", type=["pdf", "png", "jpg", "jpeg"], accept_multiple_files=True)
+        archivos_ots_up = st.file_uploader(
+            "2. Orden/es de Trabajo *Opcional*", 
+            type=["pdf", "png", "jpg", "jpeg"], 
+            accept_multiple_files=True,
+            key=f"up_ot_{st.session_state.reset_key}"
+        )
 
     if archivos_facturas_up:
         st.markdown("#### 🔗 Vincular Órdenes de Trabajo")
@@ -129,7 +147,7 @@ else:
                 ot_elegida = st.selectbox(
                     "OT Correspondiente",
                     options=opciones_ot,
-                    key=f"match_{i}_{fac.name}",
+                    key=f"match_{st.session_state.reset_key}_{i}_{fac.name}",
                     label_visibility="collapsed"
                 )
                 ot_final = dict_ots.get(ot_elegida)
@@ -144,5 +162,7 @@ else:
                 exito = subir_a_bandeja(fac_file, ot_file, motor_elegido, i + 1, total_archivos)
                 if exito: procesados_ok += 1
                 
-            st.write("---")
-            st.success(f"🎉 ¡Listo! Se enviaron {procesados_ok} comprobantes a la cola de procesamiento.")
+            # Guardamos el mensaje, recargamos y limpiamos las cajitas de carga
+            st.session_state.mensaje_exito = f"🎉 ¡Listo! Se enviaron {procesados_ok} comprobantes a la cola de procesamiento."
+            st.session_state.reset_key += 1
+            st.rerun()
