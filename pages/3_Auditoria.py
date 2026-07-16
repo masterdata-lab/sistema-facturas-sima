@@ -35,6 +35,15 @@ def asegurar_pdf(archivo):
         return pdf_bytes.getvalue()
     return archivo.getvalue()
 
+# Función de seguridad para convertir números aunque estén vacíos
+def safe_float(valor, por_defecto=0.0):
+    try:
+        if valor is None or str(valor).strip().lower() == "none" or str(valor).strip() == "":
+            return por_defecto
+        return float(valor)
+    except:
+        return por_defecto
+
 st.markdown("## ⚖️ Módulo de Auditoría Humana")
 st.markdown("Revisá los comprobantes procesados, corregí los datos si es necesario y aprobalos para la contabilidad final.")
 st.divider()
@@ -71,11 +80,9 @@ else:
         st.markdown("### 📄 Documento Original")
         id_drive = extraer_id_drive(link_fac)
         if id_drive:
-            # 🌟 NUEVO VISOR: Usa el reproductor nativo de Google Drive (cero bloqueos, full zoom/scroll)
             url_preview = f"https://drive.google.com/file/d/{id_drive}/preview"
             st.markdown(f'<iframe src="{url_preview}" width="100%" height="800px" style="border: none; border-radius: 8px;"></iframe>', unsafe_allow_html=True)
             
-            # Botón de rescate por si quieren bajarlo
             with st.expander("¿Problemas para ver el documento?"):
                 pdf_bytes_rescate = descargar_archivo(id_drive)
                 if pdf_bytes_rescate:
@@ -86,13 +93,15 @@ else:
     with col_datos:
         st.markdown("### 📝 Formulario de Validación")
         
-        # 🌟 BOTÓN DE RESETEO
         if st.button("🔄 Restablecer Datos Originales (IA)", help="Borra tus ediciones y vuelve a cargar los datos que leyó la IA."):
             st.rerun()
             
         st.markdown("#### Datos del Proveedor")
-        cuit = st.text_input("CUIT Proveedor", value=datos_ia.get("cuit_proveedor", ""))
-        razon_social = st.text_input("Razón Social", value=datos_ia.get("razon_social", ""))
+        col_cuit, col_rs = st.columns([1, 2])
+        with col_cuit:
+            cuit = st.text_input("CUIT", value=datos_ia.get("cuit_proveedor", ""))
+        with col_rs:
+            razon_social = st.text_input("Razón Social", value=datos_ia.get("razon_social", ""))
         
         st.markdown("#### Datos del Comprobante")
         col1, col2, col3 = st.columns(3)
@@ -103,40 +112,45 @@ else:
         with col3:
             num = st.text_input("Nro Factura", value=str(datos_ia.get("nro_factura", "0")))
         
+        # Procesamos la patente general para inyectarla en los ítems
         patente_ia = datos_ia.get("patente", "")
         if not patente_ia or patente_ia.upper() == "SIN_PATENTE":
             patente_ia = "DPA"
             
-        st.markdown("#### 🔗 Vinculación")
-        col4, col5 = st.columns(2)
-        with col4:
-            patente = st.text_input("Patente asignada", value=patente_ia.upper())
-        with col5:
-            nro_ot = st.text_input("Nro de OT", value=datos_ia.get("nro_ot", ""))
-        
+        st.markdown("#### 🔗 Orden de Trabajo")
+        nro_ot = st.text_input("Nro de OT (General)", value=datos_ia.get("nro_ot", ""))
         nueva_ot = st.file_uploader("📎 Adjuntar archivo de OT (Si faltó subirla)", type=["pdf", "png", "jpg", "jpeg"])
         
-        st.markdown("#### Ítems de la Factura")
-        # El data_editor es independiente de los totales para evitar congelamientos
-        items_editados = st.data_editor(
-            datos_ia.get("items", [{"descripcion": "", "cantidad": 1, "precio_unitario": 0.0}]), 
-            num_rows="dynamic"
-        )
+        st.markdown("#### Ítems de la Factura (Patentes y Montos)")
+        st.caption("Podés asignar una patente distinta a cada ítem si corresponde.")
         
-        # 🌟 MATEMÁTICA SEGURA Y DESVINCULADA
-        try:
-            suma_items = sum(float(item.get("cantidad", 1)) * float(item.get("precio_unitario", 0)) for item in items_editados)
-        except:
-            suma_items = 0.0
+        # Preparamos los ítems inyectándoles la patente de la IA si no la tienen
+        items_precargados = datos_ia.get("items", [])
+        if not items_precargados:
+            items_precargados = [{"patente": patente_ia.upper(), "descripcion": "", "cantidad": 1, "precio_unitario": 0.0}]
+        else:
+            for it in items_precargados:
+                if "patente" not in it or not it["patente"]:
+                    it["patente"] = patente_ia.upper()
+
+        items_editados = st.data_editor(items_precargados, num_rows="dynamic")
+        
+        # 🌟 MATEMÁTICA BLINDADA
+        suma_items = 0.0
+        for item in items_editados:
+            desc = str(item.get("descripcion", "")).strip()
+            if not desc or desc.lower() == "none":
+                continue # Ignora filas vacías en el cálculo
+            cant = safe_float(item.get("cantidad"), 1.0)
+            precio = safe_float(item.get("precio_unitario"), 0.0)
+            suma_items += cant * precio
             
         st.success(f"🧮 **Sumatoria automática de los ítems de arriba:** ${suma_items:,.2f}".replace(",", "X").replace(".", ",").replace("X", "."))
             
         st.markdown("#### Totales Generales (Para asentar contablemente)")
-        st.caption("Verificá que coincidan con la factura. Podés corregirlos libremente.")
         
         col6, col7 = st.columns(2)
         with col6:
-            # Los number_input arrancan con el dato de la IA, pero son libres de modificar
             subtotal = st.number_input("Subtotal (Neto)", value=float(datos_ia.get("subtotal", 0.0)), step=100.0)
         with col7:
             total = st.number_input("Total Final (Con Impuestos)", value=float(datos_ia.get("total", 0.0)), step=100.0)
@@ -160,14 +174,31 @@ else:
                 except:
                     mes_txt, anio = "00-IND", datetime.now().year
 
-                escribir_fila(H_GENERAL, [id_unico, anio, mes_txt, fecha, patente, alias_prov, razon_social, pv, num, num_completo, subtotal, total, f'=HYPERLINK("{link_fac}", "Ver PDF")'])
-                
+                # 🌟 PROCESAMIENTO DE ÍTEMS Y LIMPIEZA DE FILAS FANTASMAS
                 filas_detalle = []
+                patentes_usadas = set()
+                
                 for item in items_editados:
-                    cant = int(item.get("cantidad", 1))
-                    precio_u = float(item.get("precio_unitario", 0))
+                    desc = str(item.get("descripcion", "")).strip()
+                    if not desc or desc.lower() == "none":
+                        continue # Elimina filas basura para no ensuciar Google Sheets
+                        
+                    cant = int(safe_float(item.get("cantidad"), 1.0))
+                    precio_u = safe_float(item.get("precio_unitario"), 0.0)
+                    
+                    pat_item = str(item.get("patente", patente_ia)).strip().upper()
+                    if not pat_item or pat_item == "NONE":
+                        pat_item = "DPA"
+                    patentes_usadas.add(pat_item)
+                    
                     for _ in range(cant): 
-                        filas_detalle.append([id_unico, anio, mes_txt, fecha, alias_prov, razon_social, num_completo, nro_ot, patente, "", item.get("descripcion", ""), 1, precio_u, precio_u, f'=HYPERLINK("{link_fac}", "Ver PDF")'])
+                        filas_detalle.append([id_unico, anio, mes_txt, fecha, alias_prov, razon_social, num_completo, nro_ot, pat_item, "", desc, 1, precio_u, precio_u, f'=HYPERLINK("{link_fac}", "Ver PDF")'])
+                
+                # Armamos un resumen de patentes para la hoja general
+                patente_general_resumen = " / ".join(patentes_usadas) if patentes_usadas else "DPA"
+
+                escribir_fila(H_GENERAL, [id_unico, anio, mes_txt, fecha, patente_general_resumen, alias_prov, razon_social, pv, num, num_completo, subtotal, total, f'=HYPERLINK("{link_fac}", "Ver PDF")'])
+                
                 if filas_detalle: 
                     escribir_multiples_filas(H_DETALLE, filas_detalle)
 
