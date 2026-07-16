@@ -5,7 +5,6 @@ import io
 from PIL import Image
 from datetime import datetime
 
-# Importaciones de la sala de máquinas
 from utils.conexiones import (
     leer_hoja_completa, descargar_archivo, actualizar_estado_carga,
     escribir_fila, escribir_multiples_filas, obtener_valores_columna, limpiar_nombre, subir_archivo,
@@ -19,6 +18,14 @@ try:
 except:
     H_PENDIENTES = "PENDIENTES"
 
+# 🌟 LA MISMA LISTA MAESTRA
+CATEGORIAS_GASTO = [
+    "BATERIAS", "CHAP PINT", "DOCUMENTACION", "EXTINTORES", "FILTROS Y FLUIDOS", 
+    "GOMERIA", "MANTENIMIENTO CORRECTIVO", "MANTENIMIENTO PREVENTIVO", "NEUMATICOS", 
+    "PLOTEO", "RASTREO GPS", "REPUESTOS", "VARIOS", "VTV", "PEAJE", "LAVADO", 
+    "ESTACIONAMIENTO", "CAJA CHICA S.F."
+]
+
 def extraer_id_drive(url_drive):
     if not url_drive or url_drive == "N/A": return None
     match = re.search(r'(?:/d/|id=)([a-zA-Z0-9_-]+)', url_drive)
@@ -28,8 +35,7 @@ def asegurar_pdf(archivo):
     if archivo is None: return None
     if archivo.type.startswith("image/"):
         img = Image.open(archivo)
-        if img.mode != 'RGB': 
-            img = img.convert('RGB')
+        if img.mode != 'RGB': img = img.convert('RGB')
         pdf_bytes = io.BytesIO()
         img.save(pdf_bytes, format="PDF")
         return pdf_bytes.getvalue()
@@ -37,11 +43,9 @@ def asegurar_pdf(archivo):
 
 def safe_float(valor, por_defecto=0.0):
     try:
-        if valor is None or str(valor).strip().lower() == "none" or str(valor).strip() == "":
-            return por_defecto
+        if valor is None or str(valor).strip().lower() == "none" or str(valor).strip() == "": return por_defecto
         return float(valor)
-    except:
-        return por_defecto
+    except: return por_defecto
 
 st.markdown("## ⚖️ Módulo de Auditoría Humana")
 st.markdown("Revisá los comprobantes procesados, corregí los datos si es necesario y aprobalos para la contabilidad final.")
@@ -119,51 +123,50 @@ else:
         nro_ot = st.text_input("Nro de OT (General)", value=datos_ia.get("nro_ot", ""))
         nueva_ot = st.file_uploader("📎 Adjuntar archivo de OT (Si faltó subirla)", type=["pdf", "png", "jpg", "jpeg"])
         
-        st.markdown("#### Ítems de la Factura (Patentes y Montos)")
-        st.caption("Podés asignar patentes y desglosar precios con/sin impuestos por ítem.")
+        st.markdown("#### Ítems de la Factura")
         
-        # Mapeo y retrocompatibilidad para facturas viejas procesadas sin doble precio
         items_precargados = datos_ia.get("items", [])
         if not items_precargados:
-            items_precargados = [{"patente": patente_ia.upper(), "descripcion": "", "cantidad": 1, "precio_sin_impuestos": 0.0, "precio_con_impuestos": 0.0}]
+            items_precargados = [{"patente": patente_ia.upper(), "descripcion": "", "cantidad": 1, "precio_sin_impuestos": 0.0, "precio_con_impuestos": 0.0, "tipo_gasto": "VARIOS"}]
         else:
             for it in items_precargados:
-                if "patente" not in it or not it["patente"]:
-                    it["patente"] = patente_ia.upper()
-                if "precio_sin_impuestos" not in it:
-                    it["precio_sin_impuestos"] = safe_float(it.get("precio_unitario", 0.0))
-                if "precio_con_impuestos" not in it:
-                    it["precio_con_impuestos"] = safe_float(it.get("precio_unitario", 0.0))
+                if "patente" not in it or not it["patente"]: it["patente"] = patente_ia.upper()
+                if "precio_sin_impuestos" not in it: it["precio_sin_impuestos"] = safe_float(it.get("precio_unitario", 0.0))
+                if "precio_con_impuestos" not in it: it["precio_con_impuestos"] = safe_float(it.get("precio_unitario", 0.0))
+                if "tipo_gasto" not in it: it["tipo_gasto"] = "VARIOS"
 
-        # Mostramos el editor interactivo
-        items_editados = st.data_editor(items_precargados, num_rows="dynamic")
+        # 🌟 CONFIGURACIÓN DE LA TABLA (Menú desplegable para categoría)
+        items_editados = st.data_editor(
+            items_precargados, 
+            num_rows="dynamic",
+            column_config={
+                "tipo_gasto": st.column_config.SelectboxColumn(
+                    "Categoría",
+                    help="Clasificación contable del ítem",
+                    options=CATEGORIAS_GASTO,
+                    required=True,
+                    default="VARIOS"
+                )
+            }
+        )
         
-        # 🌟 DOBLE CÁLCULO EN VIVO (NETO VS BRUTO)
         suma_neto = 0.0
         suma_total_con_imp = 0.0
         
         for item in items_editados:
             desc = str(item.get("descripcion", "")).strip()
-            if not desc or desc.lower() == "none":
-                continue
-                
+            if not desc or desc.lower() == "none": continue
             cant = safe_float(item.get("cantidad"), 1.0)
-            p_neto = safe_float(item.get("precio_sin_impuestos"), 0.0)
-            p_total = safe_float(item.get("precio_con_impuestos"), 0.0)
+            suma_neto += cant * safe_float(item.get("precio_sin_impuestos"), 0.0)
+            suma_total_con_imp += cant * safe_float(item.get("precio_con_impuestos"), 0.0)
             
-            suma_neto += cant * p_neto
-            suma_total_con_imp += cant * p_total
-            
-        # Formateo visual amigable para Argentina
         fmt_neto = f"${suma_neto:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
         fmt_total = f"${suma_total_con_imp:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
-        st.success(f"🧮 **Suma Neto (Subtotal):** {fmt_neto} | **Suma Total (Con Impuestos):** {fmt_total}")
+        st.success(f"🧮 **Suma Neto:** {fmt_neto} | **Suma Total:** {fmt_total}")
             
-        st.markdown("#### Totales Generales (Para asentar contablemente)")
-        
+        st.markdown("#### Totales Generales")
         col6, col7 = st.columns(2)
         with col6:
-            # Sincronizamos los valores por defecto con las sumatorias vivas
             subtotal = st.number_input("Subtotal (Neto)", value=float(suma_neto), step=100.0)
         with col7:
             total = st.number_input("Total Final (Con Impuestos)", value=float(suma_total_con_imp), step=100.0)
@@ -192,23 +195,22 @@ else:
                 
                 for item in items_editados:
                     desc = str(item.get("descripcion", "")).strip()
-                    if not desc or desc.lower() == "none":
-                        continue
+                    if not desc or desc.lower() == "none": continue
                         
                     cant = int(safe_float(item.get("cantidad"), 1.0))
                     precio_neto_u = safe_float(item.get("precio_sin_impuestos"), 0.0)
                     precio_total_u = safe_float(item.get("precio_con_impuestos"), 0.0)
+                    tipo_gasto_final = str(item.get("tipo_gasto", "VARIOS")).strip().upper()
                     
                     pat_item = str(item.get("patente", patente_ia)).strip().upper()
-                    if not pat_item or pat_item == "NONE":
-                        pat_item = "DPA"
+                    if not pat_item or pat_item == "NONE": pat_item = "DPA"
                     patentes_usadas.add(pat_item)
                     
-                    # 🌟 GUARDAMOS: Col 13 (sin impuestos) y Col 14 (con impuestos) por cada fila individual
+                    # 🌟 INYECCIÓN EN GOOGLE SHEETS: En la columna 10 que estaba vacía (""), ahora guardamos el tipo_gasto
                     for _ in range(cant): 
                         filas_detalle.append([
-                            id_unico, anio, mes_txt, fecha, alias_prov, razon_social, num_completo, nro_ot, pat_item, "", 
-                            desc, 1, precio_neto_u, precio_total_u, f'=HYPERLINK("{link_fac}", "Ver PDF")'
+                            id_unico, anio, mes_txt, fecha, alias_prov, razon_social, num_completo, nro_ot, pat_item, 
+                            tipo_gasto_final, desc, 1, precio_neto_u, precio_total_u, f'=HYPERLINK("{link_fac}", "Ver PDF")'
                         ])
                 
                 patente_general_resumen = " / ".join(patentes_usadas) if patentes_usadas else "DPA"
