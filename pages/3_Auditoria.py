@@ -2,13 +2,15 @@ import streamlit as st
 import json
 import base64
 import re
+import io
+from PIL import Image
 from datetime import datetime
 
 # Importaciones de la sala de máquinas
 from utils.conexiones import (
     leer_hoja_completa, descargar_archivo, actualizar_estado_carga,
-    escribir_fila, escribir_multiples_filas, obtener_valores_columna, limpiar_nombre,
-    H_GENERAL, H_DETALLE, H_PROV
+    escribir_fila, escribir_multiples_filas, obtener_valores_columna, limpiar_nombre, subir_archivo,
+    ID_DRIVE_RAIZ, H_GENERAL, H_DETALLE, H_PROV
 )
 
 st.set_page_config(page_title="SIMA ERP | Auditoría", page_icon="⚖️", layout="wide")
@@ -23,9 +25,20 @@ def extraer_id_drive(url_drive):
     match = re.search(r'(?:/d/|id=)([a-zA-Z0-9_-]+)', url_drive)
     return match.group(1) if match else None
 
+def asegurar_pdf(archivo):
+    if archivo is None: return None
+    if archivo.type.startswith("image/"):
+        img = Image.open(archivo)
+        if img.mode != 'RGB': 
+            img = img.convert('RGB')
+        pdf_bytes = io.BytesIO()
+        img.save(pdf_bytes, format="PDF")
+        return pdf_bytes.getvalue()
+    return archivo.getvalue()
+
+# 🌟 PARCHE DE SEGURIDAD PARA CHROME (Cambiamos iframe por embed)
 def mostrar_pdf(base64_pdf):
-    # Incrusta el visor de PDF nativo del navegador
-    pdf_display = f'<iframe src="data:application/pdf;base64,{base64_pdf}" width="100%" height="700" type="application/pdf"></iframe>'
+    pdf_display = f'<embed src="data:application/pdf;base64,{base64_pdf}" width="100%" height="800" type="application/pdf">'
     st.markdown(pdf_display, unsafe_allow_html=True)
 
 st.markdown("## ⚖️ Módulo de Auditoría Humana")
@@ -35,7 +48,6 @@ st.divider()
 with st.spinner("Buscando facturas pendientes de auditoría..."):
     datos_cola = leer_hoja_completa(H_PENDIENTES)
 
-# Filtramos los que están listos para auditar (Tienen que tener estado PARA_AUDITAR y datos en la col 9)
 para_auditar = [fila for fila in datos_cola[1:] if len(fila) >= 9 and fila[6] == "PARA_AUDITAR"]
 
 if not para_auditar:
@@ -43,11 +55,9 @@ if not para_auditar:
 else:
     st.info(f"📌 Tenés {len(para_auditar)} factura/s esperando revisión.")
     
-    # Selector de factura a auditar
     opciones = {fila[0]: f"{fila[1]} - {fila[2]}" for fila in para_auditar}
     carga_seleccionada = st.selectbox("Seleccionar comprobante a auditar:", options=list(opciones.keys()), format_func=lambda x: opciones[x])
     
-    # Obtener los datos de la fila seleccionada
     fila_actual = next(f for f in para_auditar if f[0] == carga_seleccionada)
     id_carga = fila_actual[0]
     link_fac = fila_actual[4]
@@ -61,7 +71,6 @@ else:
 
     st.divider()
     
-    # 🌟 PANTALLA DIVIDIDA
     col_pdf, col_datos = st.columns([1, 1], gap="large")
     
     with col_pdf:
@@ -93,19 +102,21 @@ else:
             with col3:
                 num = st.text_input("Nro Factura", value=str(datos_ia.get("nro_factura", "0")))
             
-            # Regla de Negocio: Si la patente está vacía o dice SIN_PATENTE, ponemos DPA
             patente_ia = datos_ia.get("patente", "")
             if not patente_ia or patente_ia.upper() == "SIN_PATENTE":
                 patente_ia = "DPA"
                 
+            st.markdown("#### 🔗 Vinculación")
             col4, col5 = st.columns(2)
             with col4:
                 patente = st.text_input("Patente asignada", value=patente_ia.upper())
             with col5:
                 nro_ot = st.text_input("Nro de OT", value=datos_ia.get("nro_ot", ""))
             
+            # 🌟 NUEVO: Adjuntar OT retroactivamente
+            nueva_ot = st.file_uploader("📎 Adjuntar archivo de OT (Si faltó subirla)", type=["pdf", "png", "jpg", "jpeg"])
+            
             st.markdown("#### Ítems de la Factura (Editables)")
-            # st.data_editor permite modificar la tabla directamente en pantalla
             items_editados = st.data_editor(datos_ia.get("items", [{"descripcion": "", "cantidad": 1, "precio_unitario": 0.0}]), num_rows="dynamic", use_container_width=True)
             
             st.markdown("#### Totales Generales")
@@ -115,17 +126,19 @@ else:
             with col7:
                 total = st.number_input("Total Final (Con Impuestos)", value=float(datos_ia.get("total", 0.0)), step=100.0)
             
-            st.info("💡 **Recordatorio matemático:** Si hay una discrepancia entre la suma de los ítems y los totales generales, el sistema guardará exactamente lo que dejes escrito en estas casillas.")
-            
-            # Botón de aprobación final
             aprobado = st.form_submit_button("✅ Confirmar y Aprobar Factura", type="primary", use_container_width=True)
             
         if aprobado:
             with st.spinner("Guardando en la contabilidad definitiva..."):
-                # 1. Armamos las variables limpias
                 alias_prov = limpiar_nombre(razon_social)
                 num_completo = f"{str(pv).zfill(5)}-{str(num).zfill(8)}"
                 id_unico = f"{cuit}_{pv}_{num}"
+                
+                # Procesar la nueva OT si se subió
+                if nueva_ot:
+                    ot_bytes = asegurar_pdf(nueva_ot)
+                    # La subimos a la carpeta del proveedor
+                    link_nueva_ot = subir_archivo(f"{num_completo}_OT.pdf", ot_bytes, ID_DRIVE_RAIZ, alias_prov)
                 
                 try:
                     fecha_dt = datetime.strptime(fecha, "%d/%m/%Y")
@@ -134,10 +147,8 @@ else:
                 except:
                     mes_txt, anio = "00-IND", datetime.now().year
 
-                # 2. Guardamos en GENERAL
                 escribir_fila(H_GENERAL, [id_unico, anio, mes_txt, fecha, patente, alias_prov, razon_social, pv, num, num_completo, subtotal, total, f'=HYPERLINK("{link_fac}", "Ver PDF")'])
                 
-                # 3. Guardamos los ítems en DETALLE
                 filas_detalle = []
                 for item in items_editados:
                     cant = int(item.get("cantidad", 1))
@@ -147,13 +158,11 @@ else:
                 if filas_detalle: 
                     escribir_multiples_filas(H_DETALLE, filas_detalle)
 
-                # 4. Guardamos Proveedor si es nuevo
                 cuits_historico = obtener_valores_columna(H_PROV, 3)
                 if str(cuit) not in cuits_historico:
                     escribir_fila(H_PROV, [alias_prov, razon_social, cuit])
                 
-                # 5. Cambiamos el estado en PENDIENTES
                 actualizar_estado_carga(H_PENDIENTES, id_carga, "APROBADA")
                 
                 st.success("✅ ¡Factura aprobada y registrada en contabilidad exitosamente!")
-                st.rerun() # Recarga la página para mostrar la siguiente factura
+                st.rerun()
