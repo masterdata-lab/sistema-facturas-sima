@@ -20,6 +20,16 @@ try:
 except:
     H_PENDIENTES = "PENDIENTES"
 
+# 🌟 LISTADO MAESTRO DE LAS EMPRESAS DEL GRUPO
+EMPRESAS_GRUPO = ["SIMA S.A.", "SIMA LOGISTICA SRL", "SIMA SERVICIOS", "SIMA AGRO"]
+
+MAPEO_CUITS_SIMA = {
+    "30111111111": "SIMA S.A.",
+    "30222222222": "SIMA LOGISTICA SRL",
+    "30333333333": "SIMA SERVICIOS",
+    "30444444444": "SIMA AGRO"
+}
+
 CATEGORIAS_GASTO = [
     "BATERIAS", "CHAP PINT", "DOCUMENTACION", "EXTINTORES", "FILTROS Y FLUIDOS", 
     "GOMERIA", "MANTENIMIENTO CORRECTIVO", "MANTENIMIENTO PREVENTIVO", "NEUMATICOS", 
@@ -55,7 +65,6 @@ st.divider()
 with st.spinner("Buscando facturas..."):
     datos_cola = leer_hoja_completa(H_PENDIENTES)
 
-# 🌟 FILTRADO SEGURO: Traemos los "PARA_AUDITAR" y también los que tengan "ERROR_IA"
 para_auditar = []
 for fila in datos_cola[1:]:
     if len(fila) >= 7:
@@ -66,7 +75,7 @@ for fila in datos_cola[1:]:
 if not para_auditar:
     st.success("🎉 ¡Excelente trabajo! No hay facturas pendientes de auditoría en este momento.")
 else:
-    st.info(f"📌 Tenés {len(para_auditar)} factura/s esperando revisión o con errores de procesamiento.")
+    st.info(f"📌 Tenés {len(para_auditar)} factura/s esperando revisión.")
     
     opciones = {fila[0]: f"{fila[1]} - {fila[2]} ({'OK' if fila[6]=='PARA_AUDITAR' else '⚠️ ERROR'})" for fila in para_auditar}
     carga_seleccionada = st.selectbox("Seleccionar comprobante a auditar:", options=list(opciones.keys()), format_func=lambda x: opciones[x])
@@ -77,13 +86,10 @@ else:
     estado_actual = fila_actual[6]
     json_crudo = fila_actual[8] if len(fila_actual) >= 9 else ""
     
-    # Inicialización de datos segura
     datos_ia = {}
     if json_crudo:
-        try:
-            datos_ia = json.loads(json_crudo)
-        except:
-            pass
+        try: datos_ia = json.loads(json_crudo)
+        except: pass
 
     st.divider()
     
@@ -95,30 +101,35 @@ else:
         if id_drive:
             url_preview = f"https://drive.google.com/file/d/{id_drive}/preview"
             st.markdown(f'<iframe src="{url_preview}" width="100%" height="800px" style="border: none; border-radius: 8px;"></iframe>', unsafe_allow_html=True)
-            
-            with st.expander("¿Problemas para ver el documento?"):
-                pdf_bytes_rescate = descargar_archivo(id_drive)
-                if pdf_bytes_rescate:
-                    st.download_button("⬇️ Descargar Archivo Físico", data=pdf_bytes_rescate, file_name="comprobante.pdf", mime="application/pdf")
         else:
             st.error("No se pudo obtener el enlace al PDF.")
     
     with col_datos:
         st.markdown("### 📝 Formulario de Validación")
         
-        # 🌟 ADVERTENCIA DE ERROR
         if estado_actual.startswith("ERROR_IA"):
-            st.warning(f"⚠️ **Atención:** La IA no pudo procesar este archivo automáticamente. Código: `{estado_actual}`. Por favor, ingresá los datos manualmente mirando el PDF de la izquierda.")
+            st.warning(f"⚠️ **Atención:** La IA no pudo procesar este archivo automáticamente ({estado_actual}). Por favor, ingresá los datos manualmente.")
         
-        if st.button("🔄 Restablecer Datos Originales (IA)", help="Borra tus ediciones y vuelve a cargar los datos que leyó la IA."):
+        if st.button("🔄 Restablecer Datos Originales (IA)"):
             st.rerun()
             
         st.markdown("#### Datos del Proveedor")
         col_cuit, col_rs = st.columns([1, 2])
         with col_cuit:
-            cuit = st.text_input("CUIT", value=datos_ia.get("cuit_proveedor", ""))
+            cuit = st.text_input("CUIT Proveedor", value=datos_ia.get("cuit_proveedor", ""))
         with col_rs:
-            razon_social = st.text_input("Razón Social", value=datos_ia.get("razon_social", ""))
+            razon_social = st.text_input("Razón Social Proveedor", value=datos_ia.get("razon_social", ""))
+        
+        st.markdown("#### Empresa Grupo SIMA Facturada")
+        # 🌟 DETECCIÓN AUTOMÁTICA DE TU EMPRESA POR CUIT
+        cuit_cli_extraido = str(datos_ia.get("cuit_cliente", "")).replace("-", "").strip()
+        empresa_detectada = MAPEO_CUITS_SIMA.get(cuit_cli_extraido, "SIMA S.A.")
+        
+        empresa_sima = st.selectbox(
+            "Seleccionar Empresa de Grupo SIMA a la que se emitió la factura:",
+            options=EMPRESAS_GRUPO,
+            index=EMPRESAS_GRUPO.index(empresa_detectada) if empresa_detectada in EMPRESAS_GRUPO else 0
+        )
         
         st.markdown("#### Datos del Comprobante")
         col1, col2, col3 = st.columns(3)
@@ -135,13 +146,12 @@ else:
             
         st.markdown("#### 🔗 Orden de Trabajo")
         nro_ot = st.text_input("Nro de OT (General)", value=datos_ia.get("nro_ot", ""))
-        nueva_ot = st.file_uploader("📎 Adjuntar archivo de OT (Si faltó subirla)", type=["pdf", "png", "jpg", "jpeg"])
+        nueva_ot = st.file_uploader("📎 Adjuntar archivo de OT", type=["pdf", "png", "jpg", "jpeg"])
         
-        st.markdown("#### Ítems de la Factura")
+        st.markdown("#### Ítems de la Factura (Patentes, Categorías y Precios)")
         
         items_precargados = datos_ia.get("items", [])
         if not items_precargados:
-            # Si la IA falló, le damos una fila en blanco limpia al auditor para empezar
             items_precargados = [{"patente": patente_ia.upper(), "descripcion": "", "cantidad": 1, "precio_sin_impuestos": 0.0, "precio_con_impuestos": 0.0, "tipo_gasto": "VARIOS"}]
         else:
             for it in items_precargados:
@@ -225,15 +235,17 @@ else:
                     if not pat_item or pat_item == "NONE": pat_item = "DPA"
                     patentes_usadas.add(pat_item)
                     
+                    # 🌟 GUARDADO DE DETALLE (16 COLUMNAS): Columna 5 ahora escribe 'empresa_sima'
                     for _ in range(cant): 
                         filas_detalle.append([
-                            id_unico, anio, mes_txt, fecha, alias_prov, razon_social, num_completo, nro_ot, pat_item, 
+                            id_unico, anio, mes_txt, fecha, empresa_sima, alias_prov, razon_social, num_completo, nro_ot, pat_item, 
                             tipo_gasto_final, desc, 1, precio_neto_u, precio_total_u, f'=HYPERLINK("{link_fac}", "Ver PDF")'
                         ])
                 
                 patente_general_resumen = " / ".join(patentes_usadas) if patentes_usadas else "DPA"
 
-                escribir_fila(H_GENERAL, [id_unico, anio, mes_txt, fecha, patente_general_resumen, alias_prov, razon_social, pv, num, num_completo, subtotal, total, f'=HYPERLINK("{link_fac}", "Ver PDF")'])
+                # 🌟 GUARDADO GENERAL (14 COLUMNAS): Columna 5 escribe 'empresa_sima'
+                escribir_fila(H_GENERAL, [id_unico, anio, mes_txt, fecha, empresa_sima, patente_general_resumen, alias_prov, razon_social, pv, num, num_completo, subtotal, total, f'=HYPERLINK("{link_fac}", "Ver PDF")'])
                 
                 if filas_detalle: 
                     escribir_multiples_filas(H_DETALLE, filas_detalle)
@@ -243,7 +255,7 @@ else:
                     escribir_fila(H_PROV, [alias_prov, razon_social, cuit])
                 
                 actualizar_estado_carga(H_PENDIENTES, id_carga, "APROBADA")
-                st.success("✅ ¡Factura aprobada exitosamente!")
+                st.success("✅ ¡Factura aprobada y registrada en contabilidad exitosamente!")
                 time.sleep(1)
                 st.rerun()
 
