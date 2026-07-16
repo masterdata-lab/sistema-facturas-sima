@@ -1,7 +1,5 @@
 import streamlit as st
-import streamlit.components.v1 as components
 import json
-import base64
 import re
 import io
 from PIL import Image
@@ -37,42 +35,8 @@ def asegurar_pdf(archivo):
         return pdf_bytes.getvalue()
     return archivo.getvalue()
 
-# 🌟 EL TRUCO BLOB: Fuerza a Chrome a usar su visor nativo profesional
-def mostrar_pdf_nativo(pdf_bytes):
-    base64_pdf = base64.b64encode(pdf_bytes).decode('utf-8')
-    html_code = f"""
-    <!DOCTYPE html>
-    <html>
-    <head>
-        <style>
-            body, html {{ margin: 0; padding: 0; height: 100%; overflow: hidden; }}
-            iframe {{ width: 100%; height: 100%; border: none; }}
-        </style>
-    </head>
-    <body>
-        <script>
-            const b64Data = "{base64_pdf}";
-            const byteCharacters = atob(b64Data);
-            const byteNumbers = new Array(byteCharacters.length);
-            for (let i = 0; i < byteCharacters.length; i++) {{
-                byteNumbers[i] = byteCharacters.charCodeAt(i);
-            }}
-            const byteArray = new Uint8Array(byteNumbers);
-            const blob = new Blob([byteArray], {{type: 'application/pdf'}});
-            const blobUrl = URL.createObjectURL(blob);
-            
-            const iframe = document.createElement('iframe');
-            // Le pedimos a Chrome que muestre la barra de herramientas y ajuste el zoom
-            iframe.src = blobUrl + "#toolbar=1&navpanes=0&zoom=100";
-            document.body.appendChild(iframe);
-        </script>
-    </body>
-    </html>
-    """
-    components.html(html_code, height=800)
-
 st.markdown("## ⚖️ Módulo de Auditoría Humana")
-st.markdown("Revisá los comprobantes procesados por la IA, corregí los datos si es necesario y aprobalos para la contabilidad final.")
+st.markdown("Revisá los comprobantes procesados, corregí los datos si es necesario y aprobalos para la contabilidad final.")
 st.divider()
 
 with st.spinner("Buscando facturas pendientes de auditoría..."):
@@ -107,20 +71,23 @@ else:
         st.markdown("### 📄 Documento Original")
         id_drive = extraer_id_drive(link_fac)
         if id_drive:
-            pdf_bytes = descargar_archivo(id_drive)
-            if pdf_bytes:
-                st.download_button("⬇️ Descargar Archivo", data=pdf_bytes, file_name="comprobante.pdf", mime="application/pdf")
-                # Llamamos al nuevo visor mágico
-                mostrar_pdf_nativo(pdf_bytes)
-            else:
-                st.error("No se pudo descargar el PDF de Google Drive.")
+            # 🌟 NUEVO VISOR: Usa el reproductor nativo de Google Drive (cero bloqueos, full zoom/scroll)
+            url_preview = f"https://drive.google.com/file/d/{id_drive}/preview"
+            st.markdown(f'<iframe src="{url_preview}" width="100%" height="800px" style="border: none; border-radius: 8px;"></iframe>', unsafe_allow_html=True)
+            
+            # Botón de rescate por si quieren bajarlo
+            with st.expander("¿Problemas para ver el documento?"):
+                pdf_bytes_rescate = descargar_archivo(id_drive)
+                if pdf_bytes_rescate:
+                    st.download_button("⬇️ Descargar Archivo Físico", data=pdf_bytes_rescate, file_name="comprobante.pdf", mime="application/pdf")
+        else:
+            st.error("No se pudo obtener el enlace al PDF.")
     
     with col_datos:
         st.markdown("### 📝 Formulario de Validación")
         
-        if st.button("🔄 Restablecer Datos Originales (IA)"):
-            for key in list(st.session_state.keys()):
-                del st.session_state[key]
+        # 🌟 BOTÓN DE RESETEO
+        if st.button("🔄 Restablecer Datos Originales (IA)", help="Borra tus ediciones y vuelve a cargar los datos que leyó la IA."):
             st.rerun()
             
         st.markdown("#### Datos del Proveedor")
@@ -149,24 +116,30 @@ else:
         
         nueva_ot = st.file_uploader("📎 Adjuntar archivo de OT (Si faltó subirla)", type=["pdf", "png", "jpg", "jpeg"])
         
-        st.markdown("#### Ítems de la Factura (Cálculo en vivo)")
-        # Al editar esta tabla, se recalcula todo al instante
-        items_editados = st.data_editor(datos_ia.get("items", [{"descripcion": "", "cantidad": 1, "precio_unitario": 0.0}]), num_rows="dynamic")
+        st.markdown("#### Ítems de la Factura")
+        # El data_editor es independiente de los totales para evitar congelamientos
+        items_editados = st.data_editor(
+            datos_ia.get("items", [{"descripcion": "", "cantidad": 1, "precio_unitario": 0.0}]), 
+            num_rows="dynamic"
+        )
         
-        # 🌟 CÁLCULO MATEMÁTICO EN TIEMPO REAL
+        # 🌟 MATEMÁTICA SEGURA Y DESVINCULADA
         try:
             suma_items = sum(float(item.get("cantidad", 1)) * float(item.get("precio_unitario", 0)) for item in items_editados)
         except:
             suma_items = 0.0
             
-        st.markdown("#### Totales Generales")
-        st.caption("💡 El subtotal y el total se actualizan solos al editar los ítems de arriba. Podés sobrescribirlos manualmente si no coinciden.")
+        st.success(f"🧮 **Sumatoria automática de los ítems de arriba:** ${suma_items:,.2f}".replace(",", "X").replace(".", ",").replace("X", "."))
+            
+        st.markdown("#### Totales Generales (Para asentar contablemente)")
+        st.caption("Verificá que coincidan con la factura. Podés corregirlos libremente.")
         
         col6, col7 = st.columns(2)
         with col6:
-            subtotal = st.number_input("Subtotal (Neto)", value=float(suma_items), step=100.0)
+            # Los number_input arrancan con el dato de la IA, pero son libres de modificar
+            subtotal = st.number_input("Subtotal (Neto)", value=float(datos_ia.get("subtotal", 0.0)), step=100.0)
         with col7:
-            total = st.number_input("Total Final (Con Impuestos)", value=float(suma_items), step=100.0)
+            total = st.number_input("Total Final (Con Impuestos)", value=float(datos_ia.get("total", 0.0)), step=100.0)
         
         st.write("---")
         
