@@ -1,6 +1,7 @@
 import streamlit as st
 import io
 import json
+import time # <-- Agregado para el freno inteligente
 from PIL import Image
 from datetime import datetime
 
@@ -100,9 +101,24 @@ if archivos_facturas_up:
         panel_progreso = st.status(f"Subiendo 0 de {total} archivos...", expanded=True)
         
         for i, (fac_file, ot_file) in enumerate(mapeo_archivos):
-            panel_progreso.update(label=f"Procesando {i+1} de {total}: {fac_file.name}", state="running")
-            exito = subir_a_bandeja(fac_file, ot_file, motor_elegido, i + 1, total, modo_manual)
-            if exito: procesados_ok += 1
+            try:
+                panel_progreso.update(label=f"Procesando {i+1} de {total}: {fac_file.name}", state="running")
+                
+                exito = subir_a_bandeja(fac_file, ot_file, motor_elegido, i + 1, total, modo_manual)
+                if exito: procesados_ok += 1
+                
+                # --- EL FRENO INTELIGENTE ---
+                if i < total - 1:
+                    panel_progreso.update(label=f"⏳ Pausa de 15s para no saturar la API de Google...", state="running")
+                    time.sleep(15)
+                    
+            except Exception as e:
+                # Si a pesar de la pausa tira error 429, aplicamos freno de emergencia
+                if "429" in str(e) or "RESOURCE_EXHAUSTED" in str(e):
+                    panel_progreso.update(label=f"⚠️ Google saturado. Pausa de emergencia de 30s...", state="running")
+                    time.sleep(30)
+                else:
+                    st.error(f"❌ Error con {fac_file.name}: {e}")
             
         panel_progreso.update(label="¡Envío completado!", state="complete")
         
