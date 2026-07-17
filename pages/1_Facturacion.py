@@ -7,7 +7,7 @@ from datetime import datetime
 from utils.conexiones import (subir_archivo, escribir_fila, ID_DRIVE_RAIZ)
 
 # 1. FORZAR BARRA LATERAL CERRADA
-st.set_page_config(page_title="SIMA ERP | Carga Rápida", page_icon="⚡", layout="wide", initial_sidebar_state="collapsed")
+st.set_page_config(page_title="DPA | Carga Rápida", page_icon="⚡", layout="wide", initial_sidebar_state="collapsed")
 
 # 2. CSS PARA COMPACTAR Y RESALTAR EL MENÚ
 st.markdown("""
@@ -38,29 +38,22 @@ def asegurar_pdf(archivo):
     return archivo.getvalue()
 
 def subir_a_bandeja(fac_file, ot_file, motor_ia, indice, total_archivos):
-    with st.container(border=True):
-        st.markdown(f"**📄 Enviando {indice}/{total_archivos}:** `{fac_file.name}`")
-        barra_progreso = st.progress(10, text="⏳ Preparando archivos...")
-        
-        fac_bytes = asegurar_pdf(fac_file)
-        ot_bytes = asegurar_pdf(ot_file) if ot_file else None
-        
-        id_carga = f"Q_{int(datetime.now().timestamp())}_{indice}"
-        fecha_ahora = datetime.now().strftime("%d/%m/%Y %H:%M:%S")
+    # Ya no mostramos mensajes de progreso acá porque usamos st.status afuera
+    fac_bytes = asegurar_pdf(fac_file)
+    ot_bytes = asegurar_pdf(ot_file) if ot_file else None
+    
+    id_carga = f"Q_{int(datetime.now().timestamp())}_{indice}"
+    fecha_ahora = datetime.now().strftime("%d/%m/%Y %H:%M:%S")
 
-        barra_progreso.progress(40, text="☁️ Subiendo Factura...")
-        link_fac = subir_archivo(f"PENDIENTE_FAC_{id_carga}.pdf", fac_bytes, ID_DRIVE_RAIZ, "1_BANDEJA_ENTRADA")
+    link_fac = subir_archivo(f"PENDIENTE_FAC_{id_carga}.pdf", fac_bytes, ID_DRIVE_RAIZ, "1_BANDEJA_ENTRADA")
 
-        link_ot = ""
-        if ot_bytes:
-            barra_progreso.progress(70, text="☁️ Subiendo OT...")
-            link_ot = subir_archivo(f"PENDIENTE_OT_{id_carga}.pdf", ot_bytes, ID_DRIVE_RAIZ, "1_BANDEJA_ENTRADA")
+    link_ot = ""
+    if ot_bytes:
+        link_ot = subir_archivo(f"PENDIENTE_OT_{id_carga}.pdf", ot_bytes, ID_DRIVE_RAIZ, "1_BANDEJA_ENTRADA")
 
-        barra_progreso.progress(90, text="📝 Registrando...")
-        escribir_fila(H_PENDIENTES, [id_carga, fecha_ahora, fac_file.name, ot_file.name if ot_file else "SIN OT", link_fac, link_ot if link_ot else "N/A", "PENDIENTE", motor_ia])
-        
-        barra_progreso.empty()
-        return True
+    escribir_fila(H_PENDIENTES, [id_carga, fecha_ahora, fac_file.name, ot_file.name if ot_file else "SIN OT", link_fac, link_ot if link_ot else "N/A", "PENDIENTE", motor_ia])
+    
+    return True
 
 st.markdown("## ⚡ Carga Rápida de Comprobantes")
 st.divider()
@@ -95,13 +88,14 @@ if archivos_facturas_up:
             ot_elegida = st.selectbox("OT Correspondiente", options=opciones_ot, key=f"match_{st.session_state.reset_key}_{i}", label_visibility="collapsed")
             mapeo_archivos.append((fac, dict_ots.get(ot_elegida)))
     
- st.divider()
+    st.divider()
+    
+    # 🌟 BARRA DE PROGRESO UNIFICADA Y ESTÉTICA
     if st.button("🚀 Enviar Lote a la Bandeja", type="primary", use_container_width=True):
         procesados_ok = 0
         total = len(mapeo_archivos)
         
-        # 🌟 UN SOLO MENSAJE DE PROGRESO QUE SE ACTUALIZA
-        panel_progreso = st.status(f"Procesando 0 de {total} archivos...", expanded=True)
+        panel_progreso = st.status(f"Subiendo 0 de {total} archivos...", expanded=True)
         
         for i, (fac_file, ot_file) in enumerate(mapeo_archivos):
             panel_progreso.update(label=f"Procesando {i+1} de {total}: {fac_file.name}", state="running")
