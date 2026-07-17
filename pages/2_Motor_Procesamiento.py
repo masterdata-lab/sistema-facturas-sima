@@ -112,10 +112,14 @@ if loop_activo or iniciar_manual:
         c2.metric("⚠️ Errores API", fallidos)
         if fallidos == 0: st.balloons()
 
+# 🌟 LÓGICA DEL LOOP DE 60 SEGUNDOS
     if loop_activo:
         st.write("---")
         reloj = st.empty()
-        for i in range(300, 0, -1):
-            reloj.info(f"⏱️ Próximo escaneo automático en: **{i} segundos**...")
+        for i in range(60, 0, -1):
+            reloj.info(f"⏱️ Próximo escaneo automático en: **{i} segundos**... No cierres esta pestaña.")
             time.sleep(1)
         st.rerun()
+
+# FIRMA DPA
+st.markdown('<div style="text-align: right; font-size: 12px; color: gray; margin-top: 50px;">Software DPA | Creado por Serrano Cristian</div>', unsafe_allow_html=True)
