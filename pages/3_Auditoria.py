@@ -2,25 +2,110 @@ import streamlit as st
 import json
 import re
 import io
-import time
 from PIL import Image, ImageOps
 from datetime import datetime
 from utils.conexiones import (leer_hoja_completa, descargar_archivo, actualizar_estado_carga, escribir_fila, escribir_multiples_filas, obtener_valores_columna, limpiar_nombre, subir_archivo, ID_DRIVE_RAIZ, H_GENERAL, H_DETALLE, H_PROV)
 
-st.set_page_config(page_title="SIMA ERP | Auditoría", page_icon="⚖️", layout="wide", initial_sidebar_state="collapsed")
+st.set_page_config(page_title="DPA | Auditoría", page_icon="⚖️", layout="wide", initial_sidebar_state="collapsed")
 
-st.markdown("#### Datos del Proveedor y Destinatario")
+st.markdown("""
+<style>
+    .block-container { padding-top: 1rem; padding-bottom: 1rem; }
+    [data-testid="collapsedControl"] { border: 2px solid #ff4b4b; border-radius: 50%; box-shadow: 0px 0px 5px rgba(255,75,75,0.8); }
+    .stAlert { padding: 0.5rem; }
+    .firma { text-align: right; font-size: 12px; color: gray; margin-top: 50px; }
+</style>
+""", unsafe_allow_html=True)
+
+try: H_PENDIENTES = st.secrets["HOJA_PENDIENTES"]
+except: H_PENDIENTES = "PENDIENTES"
+
+CATEGORIAS_GASTO = ["BATERIAS", "CHAP PINT", "DOCUMENTACION", "EXTINTORES", "FILTROS Y FLUIDOS", "GOMERIA", "MANTENIMIENTO CORRECTIVO", "MANTENIMIENTO PREVENTIVO", "NEUMATICOS", "PLOTEO", "RASTREO GPS", "REPUESTOS", "VARIOS", "VTV", "PEAJE", "LAVADO", "ESTACIONAMIENTO", "CAJA CHICA S.F."]
+
+def extraer_id_drive(url_drive):
+    if not url_drive or url_drive == "N/A": return None
+    match = re.search(r'(?:/d/|id=)([a-zA-Z0-9_-]+)', url_drive)
+    return match.group(1) if match else None
+
+def asegurar_pdf(archivo):
+    if archivo is None: return None
+    if archivo.type.startswith("image/"):
+        img = Image.open(archivo)
+        img = ImageOps.exif_transpose(img) 
+        if img.mode != 'RGB': img = img.convert('RGB')
+        pdf_bytes = io.BytesIO()
+        img.save(pdf_bytes, format="PDF")
+        return pdf_bytes.getvalue()
+    return archivo.getvalue()
+
+def safe_float(valor, por_defecto=0.0):
+    try:
+        if valor is None or str(valor).strip().lower() == "none" or str(valor).strip() == "": return por_defecto
+        return float(valor)
+    except: return por_defecto
+
+st.markdown("## ⚖️ Módulo de Auditoría Humana")
+st.divider()
+
+with st.spinner("Buscando facturas..."):
+    datos_cola = leer_hoja_completa(H_PENDIENTES)
+
+para_auditar = [f for f in datos_cola[1:] if len(f) >= 7 and (f[6] == "PARA_AUDITAR" or f[6].startswith("ERROR_IA"))]
+
+if not para_auditar:
+    st.success("🎉 No hay facturas pendientes de auditoría.")
+else:
+    opciones = {}
+    for fila in para_auditar:
+        prov = "Desconocido"
+        if len(fila) >= 9 and fila[8]:
+            try: prov = json.loads(fila[8]).get("razon_social", "Desconocido")
+            except: pass
+        estado_ico = "⚠️ ERROR" if fila[6].startswith("ERROR") else "✅"
+        opciones[fila[0]] = f"{estado_ico} | 🏢 {str(prov)[:20]}... | 📄 {fila[2]} | 📅 {fila[1]}"
+        
+    carga_seleccionada = st.selectbox("Seleccionar comprobante a auditar:", options=list(opciones.keys()), format_func=lambda x: opciones[x])
+    
+    fila_actual = next(f for f in para_auditar if f[0] == carga_seleccionada)
+    id_carga, link_fac, estado_actual = fila_actual[0], fila_actual[4], fila_actual[6]
+    json_crudo = fila_actual[8] if len(fila_actual) >= 9 else ""
+    
+    datos_ia = {}
+    if json_crudo:
+        try: datos_ia = json.loads(json_crudo)
+        except: pass
+
+    st.divider()
+    col_pdf, col_datos = st.columns([1, 1], gap="medium")
+    
+    with col_pdf:
+        id_drive = extraer_id_drive(link_fac)
+        if id_drive:
+            url_preview = f"https://drive.google.com/file/d/{id_drive}/preview"
+            st.markdown(f'<iframe src="{url_preview}" width="100%" height="900px" style="border: none; border-radius: 8px;"></iframe>', unsafe_allow_html=True)
+        else:
+            st.error("No se pudo obtener el PDF.")
+    
+    with col_datos:
+        if estado_actual.startswith("ERROR_IA"):
+            st.warning(f"⚠️ La IA no pudo procesarlo. Código: {estado_actual}. Cargá manual.")
+            
+        if st.button("🔄 Restablecer Datos Originales (IA)", help="Borra tus ediciones y vuelve a cargar los datos de la IA."):
+            st.rerun()
+            
+        st.markdown("#### Datos del Proveedor y Destinatario")
         c1, c2 = st.columns(2)
         with c1: cuit = st.text_input("CUIT Proveedor", value=datos_ia.get("cuit_proveedor", ""))
         with c2: razon_social = st.text_input("Razón Social Proveedor", value=datos_ia.get("razon_social", ""))
         
-        # Gerencia histórica y Destinatario
         c3, c4 = st.columns(2)
-        with c3:
-            empresa_facturada = st.text_input("Empresa Receptora (SIMA, CAJA CHICA, etc.)", value=str(datos_ia.get("razon_social_cliente", "")).upper())
+        opciones_empresa = ["SIMA S.A.", "SIMA LOGISTICA SRL", "SIMA SERVICIOS", "SIMA AGRO", "TICKET / CAJA CHICA S.F.", "OTRO"]
+        with c3: 
+            clasificacion_empresa = st.selectbox("Clasificación Interna:", options=opciones_empresa)
         with c4:
-            # Esta es la "foto" histórica a la que pertenecía el vehículo al momento del gasto
-            gerencia_asignada = st.text_input("Gerencia Asignada (Ej: EDENOR, SEGURIDAD)", value="")
+            nombre_cliente_real = st.text_input("Receptor real en PDF", value=str(datos_ia.get("razon_social_cliente", "")).upper())
+            
+        gerencia_asignada = st.text_input("Gerencia Asignada al Vehículo (Ej: EDENOR, SEGURIDAD)", value="", help="Gerencia responsable al momento de este gasto.")
 
         with st.expander("🤖 Enseñar a la IA sobre este proveedor"):
             instruccion_ia = st.text_area("Instrucción futura para la IA:", value="", height=68)
@@ -45,7 +130,6 @@ st.markdown("#### Datos del Proveedor y Destinatario")
             if "tipo_gasto" not in it: it["tipo_gasto"] = "VARIOS"
 
         st.markdown("#### Ítems (Cálculo en vivo)")
-        # Ajustamos el ancho de las columnas para evitar el scroll horizontal
         items_editados = st.data_editor(
             items_precargados, 
             num_rows="dynamic",
@@ -66,7 +150,7 @@ st.markdown("#### Datos del Proveedor y Destinatario")
             
         st.success(f"🧮 **Subtotal calculado:** ${suma_neto:,.2f} | **Total calculado:** ${suma_total_con_imp:,.2f}")
             
-        st.markdown("#### Totales Definitivos (Se actualizan solos)")
+        st.markdown("#### Totales Definitivos")
         c10, c11 = st.columns(2)
         with c10: subtotal = st.number_input("Subtotal (Neto)", value=float(suma_neto), step=100.0, key=f"sub_{suma_neto}")
         with c11: total = st.number_input("Total (C/Impuestos)", value=float(suma_total_con_imp), step=100.0, key=f"tot_{suma_total_con_imp}")
@@ -85,12 +169,10 @@ st.markdown("#### Datos del Proveedor y Destinatario")
             st.rerun()
 
         if btn_aprobar:
-            with st.spinner("Guardando en la base de datos..."):
-                # 🌟 FORZAMOS MAYÚSCULAS EN TODAS LAS VARIABLES DE TEXTO
+            with st.spinner("Guardando en base de datos..."):
                 alias_prov = limpiar_nombre(str(razon_social).upper())
                 cuit_f = str(cuit).upper()
                 razon_social_f = str(razon_social).upper()
-                empresa_facturada_f = str(empresa_facturada).upper()
                 gerencia_asignada_f = str(gerencia_asignada).upper()
                 nro_ot_f = str(nro_ot).upper()
                 notas_f = str(notas_proveedor).upper()
@@ -107,8 +189,10 @@ st.markdown("#### Datos del Proveedor y Destinatario")
                 filas_detalle = []
                 patentes_usadas = set()
                 
+                empresa_final = clasificacion_empresa if clasificacion_empresa != "OTRO" else str(nombre_cliente_real).upper()
+                
                 for item in items_editados:
-                    desc = str(item.get("descripcion", "")).strip().upper() # MAYUSCULA
+                    desc = str(item.get("descripcion", "")).strip().upper()
                     if not desc or desc == "NONE": continue
                     cant = int(safe_float(item.get("cantidad"), 1.0))
                     precio_neto_u = safe_float(item.get("precio_sin_impuestos"), 0.0)
@@ -120,14 +204,11 @@ st.markdown("#### Datos del Proveedor y Destinatario")
                     patentes_usadas.add(pat_item)
                     
                     for _ in range(cant): 
-                        # 🌟 AHORA GUARDAMOS LA GERENCIA EN EL DETALLE TAMBIÉN
-                        filas_detalle.append([id_unico, anio, mes_txt, fecha, empresa_facturada_f, alias_prov, razon_social_f, num_completo, nro_ot_f, pat_item, tipo_gasto_final, desc, 1, precio_neto_u, precio_total_u, f'=HYPERLINK("{link_fac}", "Ver PDF")', gerencia_asignada_f])
+                        filas_detalle.append([id_unico, anio, mes_txt, fecha, empresa_final, alias_prov, razon_social_f, num_completo, nro_ot_f, pat_item, tipo_gasto_final, desc, 1, precio_neto_u, precio_total_u, f'=HYPERLINK("{link_fac}", "Ver PDF")', gerencia_asignada_f])
                 
                 patente_general_resumen = " / ".join(patentes_usadas) if patentes_usadas else "DPA"
 
-                # Guardamos contabilidad (Hemos quitado los time.sleep para ganar 3 segundos)
-                escribir_fila(H_GENERAL, [id_unico, anio, mes_txt, fecha, empresa_facturada_f, patente_general_resumen, alias_prov, razon_social_f, pv, num, num_completo, subtotal, total, f'=HYPERLINK("{link_fac}", "Ver PDF")', notas_f, gerencia_asignada_f])
-                
+                escribir_fila(H_GENERAL, [id_unico, anio, mes_txt, fecha, empresa_final, patente_general_resumen, alias_prov, razon_social_f, pv, num, num_completo, subtotal, total, f'=HYPERLINK("{link_fac}", "Ver PDF")', notas_f, gerencia_asignada_f])
                 if filas_detalle: escribir_multiples_filas(H_DETALLE, filas_detalle)
 
                 cuits_historico = obtener_valores_columna(H_PROV, 3)
@@ -142,5 +223,6 @@ st.markdown("#### Datos del Proveedor y Destinatario")
         if btn_descartar:
             actualizar_estado_carga(H_PENDIENTES, id_carga, "DESCARTADO")
             st.rerun()
+
 # FIRMA DPA
-st.markdown('<div style="text-align: right; font-size: 12px; color: gray; margin-top: 50px;">Software DPA | Creado por Serrano Cristian</div>', unsafe_allow_html=True)
+st.markdown('<div class="firma">Software DPA | Creado por Serrano Cristian</div>', unsafe_allow_html=True)
