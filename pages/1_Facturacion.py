@@ -95,12 +95,24 @@ if archivos_facturas_up:
             ot_elegida = st.selectbox("OT Correspondiente", options=opciones_ot, key=f"match_{st.session_state.reset_key}_{i}", label_visibility="collapsed")
             mapeo_archivos.append((fac, dict_ots.get(ot_elegida)))
     
-    st.divider()
+ st.divider()
     if st.button("🚀 Enviar Lote a la Bandeja", type="primary", use_container_width=True):
         procesados_ok = 0
+        total = len(mapeo_archivos)
+        
+        # 🌟 UN SOLO MENSAJE DE PROGRESO QUE SE ACTUALIZA
+        panel_progreso = st.status(f"Procesando 0 de {total} archivos...", expanded=True)
+        
         for i, (fac_file, ot_file) in enumerate(mapeo_archivos):
-            if subir_a_bandeja(fac_file, ot_file, motor_elegido, i + 1, len(mapeo_archivos)): procesados_ok += 1
+            panel_progreso.update(label=f"Procesando {i+1} de {total}: {fac_file.name}", state="running")
+            exito = subir_a_bandeja(fac_file, ot_file, motor_elegido, i + 1, total)
+            if exito: procesados_ok += 1
+            
+        panel_progreso.update(label="¡Envío completado!", state="complete")
             
         st.session_state.mensaje_exito = f"🎉 ¡Listo! Se enviaron {procesados_ok} comprobantes a la cola."
         st.session_state.reset_key += 1
         st.rerun()
+
+# FIRMA DPA
+st.markdown('<div style="text-align: right; font-size: 12px; color: gray; margin-top: 50px;">Software DPA | Creado por Serrano Cristian</div>', unsafe_allow_html=True)
