@@ -1,65 +1,74 @@
 import streamlit as st
+from utils.conexiones import leer_hoja_completa
 
-# 1. Configuración de la página (DEBE SER LA PRIMERA LÍNEA DE CÓDIGO)
-st.set_page_config(
-    page_title="SIMA ERP | Panel Principal",
-    page_icon="🏢",
-    layout="wide",
-    initial_sidebar_state="expanded"
-)
+# 1. FORZAR BARRA CERRADA
+st.set_page_config(page_title="SIMA ERP | Inicio", page_icon="🏢", layout="wide", initial_sidebar_state="collapsed")
 
-# 2. Estilos personalizados para darle un look corporativo
+# 2. CSS PARA COMPACTAR, RESALTAR MENÚ Y EMBELLECER TARJETAS
 st.markdown("""
-    <style>
-    .titulo-principal {
-        font-size: 2.5rem;
-        font-weight: 700;
-        color: #1E3A8A;
-        margin-bottom: 0px;
-    }
-    .subtitulo {
-        font-size: 1.1rem;
-        color: #6B7280;
-        margin-bottom: 30px;
-    }
-    </style>
+<style>
+    .block-container { padding-top: 2rem; padding-bottom: 2rem; }
+    [data-testid="collapsedControl"] { border: 2px solid #ff4b4b; border-radius: 50%; box-shadow: 0px 0px 5px rgba(255, 75, 75, 0.8); }
+    div[data-testid="stMetricValue"] { font-size: 2.5rem !important; color: #ff4b4b; }
+</style>
 """, unsafe_allow_html=True)
 
-# 3. Encabezado
-st.markdown('<p class="titulo-principal">🏢 Grupo SIMA | Portal de Gestión</p>', unsafe_allow_html=True)
-st.markdown('<p class="subtitulo">Seleccione un módulo para comenzar a trabajar</p>', unsafe_allow_html=True)
+try: H_PENDIENTES = st.secrets["HOJA_PENDIENTES"]
+except: H_PENDIENTES = "PENDIENTES"
+
+# Obtenemos estadísticas rápidas para el tablero
+pendientes_ia = 0
+pendientes_auditoria = 0
+
+try:
+    datos = leer_hoja_completa(H_PENDIENTES)
+    for fila in datos[1:]:
+        if len(fila) >= 7:
+            if fila[6] == "PENDIENTE": pendientes_ia += 1
+            elif fila[6] == "PARA_AUDITAR" or fila[6].startswith("ERROR"): pendientes_auditoria += 1
+except:
+    pass # Si hay error al leer, quedan en 0 para no romper el inicio
+
+st.title("🏢 Grupo SIMA - ERP Inteligente")
+st.markdown("Sistema integral de procesamiento de facturas, órdenes de trabajo y reportes financieros.")
 st.divider()
 
-# 4. Botones de Navegación (Módulos)
+st.subheader("Tablero de Control - Flujo de Trabajo")
+st.write("") # Espaciador
+
 col1, col2, col3 = st.columns(3)
 
 with col1:
-    st.info("### 🧾 FACTURACIÓN")
-    st.write("Carga de comprobantes con IA, auditoría humana y control de duplicados.")
-    # st.page_link navega directamente a los archivos de la carpeta pages/
-    st.page_link("pages/1_Facturacion.py", label="Ir a Facturación", icon="🚀")
+    with st.container(border=True):
+        st.markdown("### ⚡ Carga Rápida")
+        st.markdown("Subí facturas y órdenes de trabajo desde tu PC o escaneá con la cámara de tu celular.")
+        st.write("")
+        # Usamos page_link que es un botón nativo para cambiar de página
+        st.page_link("pages/1_Facturacion.py", label="Ir a Cargar Documentos", icon="📤", use_container_width=True)
 
 with col2:
-    st.success("### 🚛 FLOTA ACTIVA")
-    st.write("Gestión de títulos, seguros, cédulas y vinculación de patentes.")
-    st.page_link("pages/4_Flota.py", label="Ir a Flota", icon="📋")
+    with st.container(border=True):
+        st.markdown("### ⚙️ Motor IA")
+        st.metric("Facturas en cola", f"{pendientes_ia}")
+        st.markdown("Dejá que Gemini extraiga todos los datos de forma automática.")
+        st.page_link("pages/2_Motor_Procesamiento.py", label="Ir a Procesar", icon="🤖", use_container_width=True)
 
 with col3:
-    st.warning("### 🔧 TALLER Y MANTENIMIENTO")
-    st.write("Coordinación de servicios, autorizaciones y seguimiento de reparaciones.")
-    st.page_link("pages/5_Taller.py", label="Ir a Taller", icon="🛠️")
+    with st.container(border=True):
+        st.markdown("### ⚖️ Auditoría")
+        st.metric("Esperando revisión", f"{pendientes_auditoria}")
+        st.markdown("Revisá pantalla dividida, validá patentes y aprobá hacia la contabilidad.")
+        st.page_link("pages/3_Auditoria.py", label="Ir a Auditar", icon="✅", use_container_width=True)
 
 st.divider()
 
-# 5. Dashboard / Tablero de Estado (Visualmente atractivo)
-st.markdown("### 📊 Estado General del Sistema")
-met1, met2, met3, met4 = st.columns(4)
-
-with met1:
-    st.metric(label="Facturas Pendientes de Auditoría", value="0", delta="-3 revisadas hoy", delta_color="normal")
-with met2:
-    st.metric(label="Flota Activa", value="142", delta="2 altas recientes", delta_color="normal")
-with met3:
-    st.metric(label="Servicios en Taller", value="5", delta="1 por autorizar", delta_color="inverse")
-with met4:
-    st.metric(label="Estado del Servidor IA", value="🟢 Óptimo", delta="API Conectada")
+st.subheader("Análisis Financiero y Reportes")
+with st.container(border=True):
+    col_rep1, col_rep2 = st.columns([3, 1])
+    with col_rep1:
+        st.markdown("### 📊 Buscador y Tableros Dinámicos")
+        st.markdown("Filtrá gastos por empresa de Grupo SIMA, por patente, por rango de fechas o categoría. Exportá tablas y visualizá en gráficos el destino de tus fondos.")
+    with col_rep2:
+        st.write("")
+        st.write("")
+        st.button("Módulo en Construcción 🚧", disabled=True, use_container_width=True)
