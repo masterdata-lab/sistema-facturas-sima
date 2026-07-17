@@ -91,35 +91,41 @@ else:
     with col_datos:
         if estado_actual.startswith("ERROR_IA"):
             st.warning(f"⚠️ La IA no pudo procesarlo. Código: {estado_actual}. Cargá manual.")
-        if datos_ia.get("ot_incluida_en_pdf", False):
-            st.info("📌 **La IA detectó hojas de Orden de Trabajo adjuntas en este mismo documento.**")
+            
+        # 🌟 VOLVIÓ EL BOTÓN DE RESET
+        if st.button("🔄 Restablecer Datos Originales (IA)", help="Borra tus ediciones y vuelve a cargar los datos que leyó la IA."):
+            st.rerun()
             
         st.markdown("#### Datos del Proveedor")
         c1, c2 = st.columns(2)
         with c1: cuit = st.text_input("CUIT Proveedor", value=datos_ia.get("cuit_proveedor", ""))
         with c2: razon_social = st.text_input("Razón Social Proveedor", value=datos_ia.get("razon_social", ""))
         
-        # 🌟 NUEVO: FEEDBACK DIRECTO PARA LA IA
-        with st.expander("🤖 Enseñar a la IA sobre este proveedor (Opcional)"):
-            st.caption("Si la IA se equivocó leyendo este documento, dejale una regla clara acá. La próxima vez que procese un archivo de este CUIT, tendrá en cuenta tu instrucción.")
-            instruccion_ia = st.text_area("Ejemplo: 'El Nro de OT está siempre escrito a mano arriba a la derecha' o 'El subtotal tomalo del valor que dice Gravado 21%'.", value="", height=68)
+        with st.expander("🤖 Enseñar a la IA sobre este proveedor"):
+            instruccion_ia = st.text_area("Instrucción futura para la IA:", value="", height=68)
         
-        st.markdown("#### Empresa del Grupo Facturada")
-        cuit_cli_extraido = str(datos_ia.get("cuit_cliente", "")).replace("-", "").strip()
-        empresa_detectada = MAPEO_CUITS_SIMA.get(cuit_cli_extraido, "SIMA S.A.")
-        empresa_sima = st.selectbox("Seleccionar Empresa:", options=EMPRESAS_GRUPO, index=EMPRESAS_GRUPO.index(empresa_detectada) if empresa_detectada in EMPRESAS_GRUPO else 0, label_visibility="collapsed")
+        st.markdown("#### Destinatario / Empresa Facturada")
+        # 🌟 OPCIÓN DE TICKET/CAJA CHICA y NOMBRE REAL
+        opciones_empresa = ["SIMA S.A.", "SIMA LOGISTICA SRL", "SIMA SERVICIOS", "SIMA AGRO", "TICKET / CAJA CHICA S.F.", "OTRO"]
+        
+        c3, c4 = st.columns(2)
+        with c3: 
+            clasificacion_empresa = st.selectbox("Clasificación Interna:", options=opciones_empresa)
+        with c4:
+            # Mostramos lo que realmente leyó la IA como destinatario
+            nombre_cliente_real = st.text_input("Razón Social Receptora (Leída en PDF):", value=datos_ia.get("razon_social_cliente", ""))
         
         st.markdown("#### Datos del Comprobante")
-        c3, c4, c5 = st.columns(3)
-        with c3: fecha = st.text_input("Fecha (DD/MM/YYYY)", value=datos_ia.get("fecha", ""))
-        with c4: pv = st.text_input("Punto de Venta", value=str(datos_ia.get("punto_venta", "0")))
-        with c5: num = st.text_input("Nro Factura", value=str(datos_ia.get("nro_factura", "0")))
+        c5, c6, c7 = st.columns(3)
+        with c5: fecha = st.text_input("Fecha (DD/MM/YYYY)", value=datos_ia.get("fecha", ""))
+        with c6: pv = st.text_input("Punto de Venta", value=str(datos_ia.get("punto_venta", "0")))
+        with c7: num = st.text_input("Nro Factura", value=str(datos_ia.get("nro_factura", "0")))
         
         patente_ia = datos_ia.get("patente", "DPA") if datos_ia.get("patente") else "DPA"
         
-        c6, c7 = st.columns(2)
-        with c6: nro_ot = st.text_input("Nro OT (General)", value=datos_ia.get("nro_ot", ""))
-        with c7: nueva_ot = st.file_uploader("📎 Adjuntar OT separada", type=["pdf", "png", "jpg", "jpeg"])
+        c8, c9 = st.columns(2)
+        with c8: nro_ot = st.text_input("Nro OT (General)", value=datos_ia.get("nro_ot", ""))
+        with c9: nueva_ot = st.file_uploader("📎 Adjuntar OT separada", type=["pdf", "png", "jpg", "jpeg"])
         
         items_precargados = datos_ia.get("items", [{"patente": patente_ia.upper(), "descripcion": "", "cantidad": 1, "precio_sin_impuestos": 0.0, "precio_con_impuestos": 0.0, "tipo_gasto": "VARIOS"}])
         for it in items_precargados:
@@ -128,9 +134,12 @@ else:
             if "precio_con_impuestos" not in it: it["precio_con_impuestos"] = safe_float(it.get("precio_unitario", 0.0))
             if "tipo_gasto" not in it: it["tipo_gasto"] = "VARIOS"
 
-        st.markdown("#### Ítems")
+        st.markdown("#### Ítems (Cálculo en vivo)")
+        # 🌟 TABLA EXPANDIDA AL 100% PARA EVITAR SCROLL INCÓMODO
         items_editados = st.data_editor(
-            items_precargados, num_rows="dynamic",
+            items_precargados, 
+            num_rows="dynamic",
+            use_container_width=True,
             column_config={"tipo_gasto": st.column_config.SelectboxColumn("Categoría", options=CATEGORIAS_GASTO, required=True, default="VARIOS")}
         )
         
@@ -142,11 +151,17 @@ else:
             suma_neto += cant * safe_float(item.get("precio_sin_impuestos"), 0.0)
             suma_total_con_imp += cant * safe_float(item.get("precio_con_impuestos"), 0.0)
             
-        c8, c9 = st.columns(2)
-        with c8: subtotal = st.number_input("Subtotal (Neto)", value=float(datos_ia.get("subtotal", suma_neto)), step=100.0)
-        with c9: total = st.number_input("Total (C/Impuestos)", value=float(datos_ia.get("total", suma_total_con_imp)), step=100.0)
+        st.success(f"🧮 **Subtotal calculado:** ${suma_neto:,.2f} | **Total calculado:** ${suma_total_con_imp:,.2f}")
+            
+        st.markdown("#### Totales Definitivos (Se actualizan solos)")
+        c10, c11 = st.columns(2)
+        with c10: 
+            # 🌟 EL TRUCO DE LA LLAVE: Fuerza a Streamlit a redibujar el input si cambia la suma
+            subtotal = st.number_input("Subtotal (Neto)", value=float(suma_neto), step=100.0, key=f"sub_{suma_neto}")
+        with c11: 
+            total = st.number_input("Total (C/Impuestos)", value=float(suma_total_con_imp), step=100.0, key=f"tot_{suma_total_con_imp}")
         
-        notas_proveedor = st.text_area("📝 Notas u Observaciones contables (Ej: Chequear retenciones, falta firma)", value="", height=68)
+        notas_proveedor = st.text_area("📝 Notas u Observaciones contables", value="", height=68)
         
         st.write("---")
         
@@ -157,8 +172,6 @@ else:
         
         if btn_reprocesar:
             actualizar_estado_carga(H_PENDIENTES, id_carga, "PENDIENTE")
-            st.toast("Enviado nuevamente a la cola del motor.", icon="🔄")
-            time.sleep(1)
             st.rerun()
 
         if btn_aprobar:
@@ -167,14 +180,16 @@ else:
                 num_completo = f"{str(pv).zfill(5)}-{str(num).zfill(8)}"
                 id_unico = f"{cuit}_{pv}_{num}"
                 
-                if nueva_ot:
-                    link_nueva_ot = subir_archivo(f"{num_completo}_OT.pdf", asegurar_pdf(nueva_ot), ID_DRIVE_RAIZ, alias_prov)
+                if nueva_ot: link_nueva_ot = subir_archivo(f"{num_completo}_OT.pdf", asegurar_pdf(nueva_ot), ID_DRIVE_RAIZ, alias_prov)
                 
                 try: fecha_dt = datetime.strptime(fecha, "%d/%m/%Y"); mes_txt = f"{str(fecha_dt.month).zfill(2)}-{['ENE','FEB','MAR','ABR','MAY','JUN','JUL','AGO','SEP','OCT','NOV','DIC'][fecha_dt.month-1]}"; anio = fecha_dt.year
                 except: mes_txt, anio = "00-IND", datetime.now().year
 
                 filas_detalle = []
                 patentes_usadas = set()
+                
+                # Si es otro o ticket, guardamos eso como identificador principal
+                empresa_final = clasificacion_empresa if clasificacion_empresa != "OTRO" else nombre_cliente_real
                 
                 for item in items_editados:
                     desc = str(item.get("descripcion", "")).strip()
@@ -189,30 +204,25 @@ else:
                     patentes_usadas.add(pat_item)
                     
                     for _ in range(cant): 
-                        filas_detalle.append([id_unico, anio, mes_txt, fecha, empresa_sima, alias_prov, razon_social, num_completo, nro_ot, pat_item, tipo_gasto_final, desc, 1, precio_neto_u, precio_total_u, f'=HYPERLINK("{link_fac}", "Ver PDF")'])
+                        filas_detalle.append([id_unico, anio, mes_txt, fecha, empresa_final, alias_prov, razon_social, num_completo, nro_ot, pat_item, tipo_gasto_final, desc, 1, precio_neto_u, precio_total_u, f'=HYPERLINK("{link_fac}", "Ver PDF")'])
                 
                 patente_general_resumen = " / ".join(patentes_usadas) if patentes_usadas else "DPA"
 
-                # Guardamos contabilidad
-                escribir_fila(H_GENERAL, [id_unico, anio, mes_txt, fecha, empresa_sima, patente_general_resumen, alias_prov, razon_social, pv, num, num_completo, subtotal, total, f'=HYPERLINK("{link_fac}", "Ver PDF")', notas_proveedor])
+                escribir_fila(H_GENERAL, [id_unico, anio, mes_txt, fecha, empresa_final, patente_general_resumen, alias_prov, razon_social, pv, num, num_completo, subtotal, total, f'=HYPERLINK("{link_fac}", "Ver PDF")', notas_proveedor])
                 if filas_detalle: escribir_multiples_filas(H_DETALLE, filas_detalle)
 
-                # Actualizamos Histórico Proveedores
                 cuits_historico = obtener_valores_columna(H_PROV, 3)
                 if str(cuit) not in cuits_historico: escribir_fila(H_PROV, [alias_prov, razon_social, cuit])
-
-                # 🌟 GUARDAMOS LA REGLA PARA LA IA (SI SE ESCRIBIÓ ALGO)
+                
                 if instruccion_ia.strip() and cuit:
-                    fecha_regla = datetime.now().strftime("%d/%m/%Y %H:%M:%S")
-                    escribir_fila("REGLAS_IA", [cuit, razon_social, instruccion_ia.strip(), fecha_regla])
+                    escribir_fila("REGLAS_IA", [cuit, razon_social, instruccion_ia.strip(), datetime.now().strftime("%d/%m/%Y %H:%M:%S")])
                 
                 actualizar_estado_carga(H_PENDIENTES, id_carga, "APROBADA")
-                st.success("✅ ¡Factura aprobada!")
-                time.sleep(1)
                 st.rerun()
 
         if btn_descartar:
             actualizar_estado_carga(H_PENDIENTES, id_carga, "DESCARTADO")
-            st.toast("Comprobante descartado.", icon="🗑️")
-            time.sleep(1)
             st.rerun()
+
+# FIRMA DPA
+st.markdown('<div style="text-align: right; font-size: 12px; color: gray; margin-top: 50px;">Software DPA | Creado por Serrano Cristian</div>', unsafe_allow_html=True)
