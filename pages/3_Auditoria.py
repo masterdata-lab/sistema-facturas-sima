@@ -7,10 +7,8 @@ from PIL import Image, ImageOps
 from datetime import datetime
 from utils.conexiones import (leer_hoja_completa, descargar_archivo, actualizar_estado_carga, escribir_fila, escribir_multiples_filas, obtener_valores_columna, limpiar_nombre, subir_archivo, ID_DRIVE_RAIZ, H_GENERAL, H_DETALLE, H_PROV)
 
-# 1. FORZAR BARRA CERRADA
 st.set_page_config(page_title="SIMA ERP | Auditoría", page_icon="⚖️", layout="wide", initial_sidebar_state="collapsed")
 
-# 2. CSS PARA COMPACTAR
 st.markdown("""
 <style>
     .block-container { padding-top: 1rem; padding-bottom: 1rem; }
@@ -31,12 +29,11 @@ def extraer_id_drive(url_drive):
     match = re.search(r'(?:/d/|id=)([a-zA-Z0-9_-]+)', url_drive)
     return match.group(1) if match else None
 
-# 🌟 CORRECCIÓN DE FOTOS ACOSTADAS
 def asegurar_pdf(archivo):
     if archivo is None: return None
     if archivo.type.startswith("image/"):
         img = Image.open(archivo)
-        img = ImageOps.exif_transpose(img) # <--- Magia que endereza las fotos de celular
+        img = ImageOps.exif_transpose(img) 
         if img.mode != 'RGB': img = img.convert('RGB')
         pdf_bytes = io.BytesIO()
         img.save(pdf_bytes, format="PDF")
@@ -60,7 +57,6 @@ para_auditar = [f for f in datos_cola[1:] if len(f) >= 7 and (f[6] == "PARA_AUDI
 if not para_auditar:
     st.success("🎉 No hay facturas pendientes de auditoría.")
 else:
-    # 🌟 DESPLEGABLE INTELIGENTE (Muestra el Proveedor)
     opciones = {}
     for fila in para_auditar:
         prov = "Desconocido"
@@ -98,15 +94,22 @@ else:
         if datos_ia.get("ot_incluida_en_pdf", False):
             st.info("📌 **La IA detectó hojas de Orden de Trabajo adjuntas en este mismo documento.**")
             
-        st.markdown("#### Datos de la Operación")
+        st.markdown("#### Datos del Proveedor")
         c1, c2 = st.columns(2)
         with c1: cuit = st.text_input("CUIT Proveedor", value=datos_ia.get("cuit_proveedor", ""))
         with c2: razon_social = st.text_input("Razón Social Proveedor", value=datos_ia.get("razon_social", ""))
         
+        # 🌟 NUEVO: FEEDBACK DIRECTO PARA LA IA
+        with st.expander("🤖 Enseñar a la IA sobre este proveedor (Opcional)"):
+            st.caption("Si la IA se equivocó leyendo este documento, dejale una regla clara acá. La próxima vez que procese un archivo de este CUIT, tendrá en cuenta tu instrucción.")
+            instruccion_ia = st.text_area("Ejemplo: 'El Nro de OT está siempre escrito a mano arriba a la derecha' o 'El subtotal tomalo del valor que dice Gravado 21%'.", value="", height=68)
+        
+        st.markdown("#### Empresa del Grupo Facturada")
         cuit_cli_extraido = str(datos_ia.get("cuit_cliente", "")).replace("-", "").strip()
         empresa_detectada = MAPEO_CUITS_SIMA.get(cuit_cli_extraido, "SIMA S.A.")
-        empresa_sima = st.selectbox("Empresa Grupo SIMA Facturada:", options=EMPRESAS_GRUPO, index=EMPRESAS_GRUPO.index(empresa_detectada) if empresa_detectada in EMPRESAS_GRUPO else 0)
+        empresa_sima = st.selectbox("Seleccionar Empresa:", options=EMPRESAS_GRUPO, index=EMPRESAS_GRUPO.index(empresa_detectada) if empresa_detectada in EMPRESAS_GRUPO else 0, label_visibility="collapsed")
         
+        st.markdown("#### Datos del Comprobante")
         c3, c4, c5 = st.columns(3)
         with c3: fecha = st.text_input("Fecha (DD/MM/YYYY)", value=datos_ia.get("fecha", ""))
         with c4: pv = st.text_input("Punto de Venta", value=str(datos_ia.get("punto_venta", "0")))
@@ -143,12 +146,10 @@ else:
         with c8: subtotal = st.number_input("Subtotal (Neto)", value=float(datos_ia.get("subtotal", suma_neto)), step=100.0)
         with c9: total = st.number_input("Total (C/Impuestos)", value=float(datos_ia.get("total", suma_total_con_imp)), step=100.0)
         
-        # 🌟 NUEVO: CAMPO DE NOTAS
-        notas_proveedor = st.text_area("📝 Notas u Observaciones (Ej: Chequear retenciones, falta firma)", value="", height=68)
+        notas_proveedor = st.text_area("📝 Notas u Observaciones contables (Ej: Chequear retenciones, falta firma)", value="", height=68)
         
         st.write("---")
         
-        # 🌟 BOTONERA DE 3 OPCIONES
         b1, b2, b3 = st.columns(3)
         with b1: btn_aprobar = st.button("✅ Confirmar y Aprobar", type="primary", use_container_width=True)
         with b2: btn_reprocesar = st.button("🔄 IA leyó mal (Reprocesar)", type="secondary", use_container_width=True)
@@ -192,12 +193,18 @@ else:
                 
                 patente_general_resumen = " / ".join(patentes_usadas) if patentes_usadas else "DPA"
 
-                # 🌟 GUARDAMOS LAS NOTAS EN LA COLUMNA 15 DE 'GENERAL'
+                # Guardamos contabilidad
                 escribir_fila(H_GENERAL, [id_unico, anio, mes_txt, fecha, empresa_sima, patente_general_resumen, alias_prov, razon_social, pv, num, num_completo, subtotal, total, f'=HYPERLINK("{link_fac}", "Ver PDF")', notas_proveedor])
                 if filas_detalle: escribir_multiples_filas(H_DETALLE, filas_detalle)
 
+                # Actualizamos Histórico Proveedores
                 cuits_historico = obtener_valores_columna(H_PROV, 3)
                 if str(cuit) not in cuits_historico: escribir_fila(H_PROV, [alias_prov, razon_social, cuit])
+
+                # 🌟 GUARDAMOS LA REGLA PARA LA IA (SI SE ESCRIBIÓ ALGO)
+                if instruccion_ia.strip() and cuit:
+                    fecha_regla = datetime.now().strftime("%d/%m/%Y %H:%M:%S")
+                    escribir_fila("REGLAS_IA", [cuit, razon_social, instruccion_ia.strip(), fecha_regla])
                 
                 actualizar_estado_carga(H_PENDIENTES, id_carga, "APROBADA")
                 st.success("✅ ¡Factura aprobada!")
