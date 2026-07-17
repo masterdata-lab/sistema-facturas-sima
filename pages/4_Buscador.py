@@ -117,11 +117,26 @@ else:
         if 'Notas y Observaciones' in df_gen_filtrado.columns:
             df_gen_filtrado['Tiene Nota'] = df_gen_filtrado['Notas y Observaciones'].apply(lambda x: "📝 Sí" if str(x).strip() and str(x).strip() != 'None' else "")
         
-        # 🌟 MAGIA PARA LOS LINKS: Extraemos la URL de la fórmula HYPERLINK de Sheets
+        # 🌟 MAGIA PARA LOS LINKS A PRUEBA DE BALAS
+        import re
         df_gen_visual = df_gen_filtrado.copy()
+        
+        def extraer_url(texto):
+            # Busca cualquier enlace http o https adentro de la celda, no importa cómo esté formateado
+            match = re.search(r'(https?://[^\s",]+)', str(texto))
+            return match.group(1) if match else ""
+            
         if 'Link PDF' in df_gen_visual.columns:
-            # Busca la URL adentro de los paréntesis de =HYPERLINK("URL", "Texto")
-            df_gen_visual['Link PDF'] = df_gen_visual['Link PDF'].str.extract(r'HYPERLINK\("(.*?)",')
+            df_gen_visual['Link PDF'] = df_gen_visual['Link PDF'].apply(extraer_url)
+        
+        st.dataframe(
+            df_gen_visual, 
+            use_container_width=True, 
+            hide_index=True,
+            column_config={
+                "Link PDF": st.column_config.LinkColumn("📄 Archivo Físico", display_text="Abrir PDF")
+            }
+        )
         
         # Configuramos la tabla para que lea esa columna como un botón de Link nativo
         st.dataframe(
