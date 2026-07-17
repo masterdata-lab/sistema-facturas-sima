@@ -5,3 +5,4 @@ Pillow
 PyPDF2
 pandas
 streamlit-pdf-viewer
+pandas
