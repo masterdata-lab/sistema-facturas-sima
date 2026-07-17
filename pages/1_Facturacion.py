@@ -1,26 +1,13 @@
 import streamlit as st
 import io
+import json
 from PIL import Image
 from datetime import datetime
 
-# Importaciones de la sala de máquinas
 from utils.conexiones import (subir_archivo, escribir_fila, ID_DRIVE_RAIZ)
 
-# 1. FORZAR BARRA LATERAL CERRADA
-st.set_page_config(page_title="DPA | Carga Rápida", page_icon="⚡", layout="wide", initial_sidebar_state="collapsed")
-
-# 2. CSS PARA COMPACTAR Y RESALTAR EL MENÚ
-st.markdown("""
-<style>
-    .block-container { padding-top: 2rem; padding-bottom: 2rem; }
-    [data-testid="collapsedControl"] { border: 2px solid #ff4b4b; border-radius: 50%; box-shadow: 0px 0px 5px rgba(255, 75, 75, 0.8); }
-</style>
-""", unsafe_allow_html=True)
-
-try:
-    H_PENDIENTES = st.secrets["HOJA_PENDIENTES"]
-except:
-    H_PENDIENTES = "PENDIENTES"
+try: H_PENDIENTES = st.secrets["HOJA_PENDIENTES"]
+except: H_PENDIENTES = "PENDIENTES"
 
 if "reset_key" not in st.session_state: st.session_state.reset_key = 0
 if "mensaje_exito" in st.session_state:
@@ -37,8 +24,7 @@ def asegurar_pdf(archivo):
         return pdf_bytes.getvalue()
     return archivo.getvalue()
 
-def subir_a_bandeja(fac_file, ot_file, motor_ia, indice, total_archivos):
-    # Ya no mostramos mensajes de progreso acá porque usamos st.status afuera
+def subir_a_bandeja(fac_file, ot_file, motor_ia, indice, total_archivos, es_carga_manual):
     fac_bytes = asegurar_pdf(fac_file)
     ot_bytes = asegurar_pdf(ot_file) if ot_file else None
     
@@ -51,19 +37,34 @@ def subir_a_bandeja(fac_file, ot_file, motor_ia, indice, total_archivos):
     if ot_bytes:
         link_ot = subir_archivo(f"PENDIENTE_OT_{id_carga}.pdf", ot_bytes, ID_DRIVE_RAIZ, "1_BANDEJA_ENTRADA")
 
-    escribir_fila(H_PENDIENTES, [id_carga, fecha_ahora, fac_file.name, ot_file.name if ot_file else "SIN OT", link_fac, link_ot if link_ot else "N/A", "PENDIENTE", motor_ia])
+    # 🌟 LÓGICA DE CARGA MANUAL DIRECTA
+    if es_carga_manual:
+        estado = "PARA_AUDITAR"
+        # Le inyectamos un JSON vacío para que la Auditoría no colapse al leerlo
+        json_vacio = json.dumps({"ot_incluida_en_pdf": False, "items": []})
+        escribir_fila(H_PENDIENTES, [id_carga, fecha_ahora, fac_file.name, ot_file.name if ot_file else "SIN OT", link_fac, link_ot if link_ot else "N/A", estado, "CARGA_MANUAL_DIRECTA", json_vacio])
+    else:
+        estado = "PENDIENTE"
+        escribir_fila(H_PENDIENTES, [id_carga, fecha_ahora, fac_file.name, ot_file.name if ot_file else "SIN OT", link_fac, link_ot if link_ot else "N/A", estado, motor_ia])
     
     return True
 
-st.markdown("## ⚡ Carga Rápida de Comprobantes")
+st.markdown("## ⚡ Carga de Comprobantes")
 st.divider()
 
-col_motor, col_vacia = st.columns([1, 1])
-with col_motor:
-    opcion_ia = st.selectbox("⚙️ Preferencia de Motor IA:", options=["Gemini 3.5 Flash (Rápido)", "Gemini 3.1 Pro (Avanzado)"], label_visibility="collapsed")
-motor_elegido = 'gemini-3.5-flash' if "Flash" in opcion_ia else 'gemini-3.1-pro'
+# 🌟 INTERRUPTOR DE CARGA MANUAL
+modo_manual = st.toggle("✍️ **Activar Modo de Ingreso Manual Directo**", help="Si activás esto, la IA no procesará el documento. Irá directo a la Auditoría para que cargues todos los datos a mano.")
 
-st.info("💡 **Instrucciones:** Desde PC arrastrá los archivos. Desde el celular, tocá 'Browse files' para abrir tu cámara de fotos nativa.")
+if modo_manual:
+    st.warning("⚠️ **Modo Manual Activado:** Los documentos subidos irán directamente a la bandeja de Auditoría.")
+    motor_elegido = "CARGA_MANUAL"
+else:
+    col_motor, col_vacia = st.columns([1, 1])
+    with col_motor:
+        opcion_ia = st.selectbox("⚙️ Preferencia de Motor IA:", options=["Gemini 3.5 Flash (Rápido)", "Gemini 3.1 Pro (Avanzado)"], label_visibility="collapsed")
+    motor_elegido = 'gemini-3.5-flash' if "Flash" in opcion_ia else 'gemini-3.1-pro'
+
+st.info("💡 **Instrucciones:** Desde PC arrastrá los archivos. Desde el celular, tocá 'Browse files' para abrir tu cámara.")
 
 col_up1, col_up2 = st.columns(2)
 with col_up1:
@@ -90,8 +91,9 @@ if archivos_facturas_up:
     
     st.divider()
     
-    # 🌟 BARRA DE PROGRESO UNIFICADA Y ESTÉTICA
-    if st.button("🚀 Enviar Lote a la Bandeja", type="primary", use_container_width=True):
+    texto_boton = "🚀 Enviar a la Auditoría (Ingreso Manual)" if modo_manual else "🚀 Enviar Lote al Motor IA"
+    
+    if st.button(texto_boton, type="primary", use_container_width=True):
         procesados_ok = 0
         total = len(mapeo_archivos)
         
@@ -99,14 +101,17 @@ if archivos_facturas_up:
         
         for i, (fac_file, ot_file) in enumerate(mapeo_archivos):
             panel_progreso.update(label=f"Procesando {i+1} de {total}: {fac_file.name}", state="running")
-            exito = subir_a_bandeja(fac_file, ot_file, motor_elegido, i + 1, total)
+            exito = subir_a_bandeja(fac_file, ot_file, motor_elegido, i + 1, total, modo_manual)
             if exito: procesados_ok += 1
             
         panel_progreso.update(label="¡Envío completado!", state="complete")
+        
+        if modo_manual:
+            st.session_state.mensaje_exito = f"🎉 ¡Listo! Se enviaron {procesados_ok} comprobantes directo a la Auditoría para carga manual."
+        else:
+            st.session_state.mensaje_exito = f"🎉 ¡Listo! Se enviaron {procesados_ok} comprobantes a la cola del motor IA."
             
-        st.session_state.mensaje_exito = f"🎉 ¡Listo! Se enviaron {procesados_ok} comprobantes a la cola."
         st.session_state.reset_key += 1
         st.rerun()
 
-# FIRMA DPA
-st.markdown('<div style="text-align: right; font-size: 12px; color: gray; margin-top: 50px;">Software DPA | Creado por Serrano Cristian</div>', unsafe_allow_html=True)
+st.markdown('<div class="firma">Software DPA | Creado por Serrano Cristian</div>', unsafe_allow_html=True)
