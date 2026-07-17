@@ -113,12 +113,25 @@ else:
     with tab_facturas:
         st.markdown("### Facturas Registradas")
         
-        # Resaltar si tiene Notas (Agregamos un emoji visual)
+        # Resaltar si tiene Notas
         if 'Notas y Observaciones' in df_gen_filtrado.columns:
             df_gen_filtrado['Tiene Nota'] = df_gen_filtrado['Notas y Observaciones'].apply(lambda x: "📝 Sí" if str(x).strip() and str(x).strip() != 'None' else "")
         
-        # Mostramos la tabla completa
-        st.dataframe(df_gen_filtrado, use_container_width=True, hide_index=True)
+        # 🌟 MAGIA PARA LOS LINKS: Extraemos la URL de la fórmula HYPERLINK de Sheets
+        df_gen_visual = df_gen_filtrado.copy()
+        if 'Link PDF' in df_gen_visual.columns:
+            # Busca la URL adentro de los paréntesis de =HYPERLINK("URL", "Texto")
+            df_gen_visual['Link PDF'] = df_gen_visual['Link PDF'].str.extract(r'HYPERLINK\("(.*?)",')
+        
+        # Configuramos la tabla para que lea esa columna como un botón de Link nativo
+        st.dataframe(
+            df_gen_visual, 
+            use_container_width=True, 
+            hide_index=True,
+            column_config={
+                "Link PDF": st.column_config.LinkColumn("📄 Ver Archivo", display_text="Abrir PDF")
+            }
+        )
 
-# 3. FIRMA CREADOR
-st.markdown('<div class="firma">Creado por Serrano Cristian</div>', unsafe_allow_html=True)
+# FIRMA DPA
+st.markdown('<div class="firma">Software DPA | Creado por Serrano Cristian</div>', unsafe_allow_html=True)
