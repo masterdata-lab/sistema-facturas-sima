@@ -33,7 +33,7 @@ def extraer_id_drive(url_drive):
 
 col_opts_1, col_opts_2 = st.columns(2)
 with col_opts_1:
-    modelo_ia = st.selectbox("🧠 Seleccionar Cerebro IA", ["gemini-3.5-flash"])
+    modelo_ia = st.selectbox("🧠 Seleccionar Cerebro IA", ["gemini-3.1-flash-lite"])
 with col_opts_2:
     reprocesar_errores = st.checkbox("🔄 Intentar reprocesar registros con error", value=True)
     loop_activo = st.checkbox("🔄 Modo Loop Automático (Procesar cada 60 seg)", value=False)
