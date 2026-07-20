@@ -65,8 +65,9 @@ pg = st.navigation({
         st.Page("pages/3_Auditoria.py", title="Auditoría Humana", icon="⚖️"),
         st.Page("pages/4_Buscador.py", title="Buscador DPA", icon="🔍")
     ],
-    "🚘 Control de Flota (Manual-First)": [
-        st.Page("pages/5_Flota_Ingestion.py", title="Ingestión y Auditoría", icon="📥"),
+   "🚘 Control de Flota (Manual-First)": [
+        st.Page("pages/5_Flota_Ingestion.py", title="Ingestión de Archivos", icon="📥"),
+        st.Page("pages/8_Flota_Auditoria.py", title="Mesa de Auditoría Flota", icon="⚖️"),
         st.Page("pages/6_Flota_Buscador.py", title="Consulta por Patente", icon="🔍")
     ],
     "🔧 Maestros y Configuración": [
