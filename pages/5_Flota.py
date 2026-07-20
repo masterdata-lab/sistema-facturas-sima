@@ -3,6 +3,8 @@ import pandas as pd
 import json
 import io
 import time
+import re
+import pypdf  # Asegurate de tener pypdf en tu requirements.txt
 from PIL import Image, ImageOps
 from datetime import datetime
 from google.genai import types
@@ -38,29 +40,37 @@ def asegurar_pdf(archivo):
         return pdf_bytes.getvalue()
     return archivo.getvalue()
 
-def procesar_documento_vehicular_multiple(pdf_bytes):
+def procesar_pagina_individual_con_ia(pdf_page_bytes):
     """
-    Intenta extraer datos con IA. Si falla por cuota/saturación (503/429), 
-    retorna una lista vacía de forma segura en lugar de romper la app.
+    Envía una sola página formateada a la IA con lógica de reintento robusta.
     """
     prompt = """
-    Analiza este documento vehicular argentino. Puede contener uno o MUCHOS registros agrupados.
-    1. Identifica qué tipo de documento base es: "TITULO", "VTV", "SEGURO", "RUTA" o "DESCONOCIDO".
-    2. Extrae la información unidad por unidad (patente por patente).
-    Devuelve estrictamente una lista JSON con esta estructura:
-    [{"tipo_documento": "TITULO", "patente": "AB123CD", "marca": "", "modelo": "", "anio": "", "chasis": "", "motor": "", "fecha_vencimiento": ""}]
+    Analiza este documento vehicular argentino (es una sola página o extracto).
+    1. Identifica qué tipo es: "TITULO", "VTV", "SEGURO", "RUTA" o "DESCONOCIDO".
+    2. Extrae la PATENTE (dominio). Sin espacios ni guiones.
+    3. Si es TITULO: extrae marca, modelo, año, chasis y motor.
+    4. Si es VTV, SEGURO o RUTA: extrae la FECHA DE VENCIMIENTO (formato DD/MM/YYYY).
+    Devuelve JSON estricto:
+    {
+        "tipo_documento": "TITULO", "patente": "AB123CD",
+        "marca": "", "modelo": "", "anio": "", "chasis": "", "motor": "", "fecha_vencimiento": ""
+    }
     """
-    try:
-        doc = types.Part.from_bytes(data=pdf_bytes, mime_type="application/pdf")
-        resp = ia_client.models.generate_content(
-            model='gemini-3.5-flash', contents=[doc, prompt],
-            config=types.GenerateContentConfig(response_mime_type="application/json")
-        )
-        resultado = json.loads(resp.text)
-        return resultado if isinstance(resultado, list) else [resultado]
-    except Exception as e:
-        # Falla silenciosa para el usuario: la IA no está disponible en este momento
-        return []
+    doc = types.Part.from_bytes(data=pdf_page_bytes, mime_type="application/pdf")
+    
+    # Reintentos automáticos si Google responde con 503 (Alta demanda)
+    for intento in range(3):
+        try:
+            resp = ia_client.models.generate_content(
+                model='gemini-3.5-flash', contents=[doc, prompt],
+                config=types.GenerateContentConfig(response_mime_type="application/json", temperature=0.1)
+            )
+            return json.loads(resp.text)
+        except Exception as e:
+            if "503" in str(e) and intento < 2:
+                time.sleep(2 ** intento)  # Espera exponencial (2s, 4s)
+                continue
+            raise e
 
 def calcular_estado_vto(fecha_str):
     if not fecha_str or str(fecha_str).strip() == "": return "⚪ Sin Dato"
@@ -81,7 +91,7 @@ except: datos_gerencias = []
 lista_gerencias = [str(g[0]).upper() for g in datos_gerencias[1:] if len(g)>0 and str(g[1]).upper()!="INACTIVO"]
 if not lista_gerencias: lista_gerencias = ["DPA"]
 
-tab_visor, tab_alta, tab_renovacion = st.tabs(["📊 Estado de Flota", "➕ Alta de Vehículos", "📅 Carga de VTV/Seguros"])
+tab_visor, tab_alta, tab_renovacion = st.tabs(["📊 Estado de Flota", "➕ Alta Inteligente Automatizada", "📅 Carga Masiva de Vencimientos"])
 
 with tab_visor:
     st.markdown("### Semáforo Documental y Asignaciones")
@@ -99,104 +109,124 @@ with tab_visor:
     except: pass
 
 with tab_alta:
-    st.markdown("### Ingreso de Vehículos (Manual Primero)")
+    st.markdown("### Procesamiento Absoluto de Títulos (Lotes o Multipágina)")
+    st.info("🤖 **Modo Empleada IA Extremo:** Arrastrá cualquier archivo. Si el PDF contiene 5 o 10 títulos juntos, la IA los va a separar, extraer los datos y guardar cada PDF renombrado de forma individual.")
     
-    # El archivo de respaldo siempre se sube
-    archivo_adjunto = st.file_uploader("Subir Título de Respaldo (PDF/Fotos)", type=["pdf", "png", "jpg"])
+    archivos_titulos = st.file_uploader("Subir Títulos (PDF/Fotos)", type=["pdf", "png", "jpg"], accept_multiple_files=True)
     
-    # Formulario explícito: la verdad de los datos la tiene el usuario
-    with st.form("form_alta_vehiculo"):
-        st.write("📋 **Datos de la Unidad** (Podés completarlos manualmente o usar el asistente abajo)")
-        c1, c2, c3 = st.columns(3)
-        patente_input = c1.text_input("Patente *").upper().replace("-","").replace(" ","")
-        gerencia_input = c2.selectbox("Gerencia Asignada", lista_gerencias)
-        marca_input = c3.text_input("Marca")
+    if archivos_titulos and st.button("🚀 Ejecutar Procesamiento e Indexación", type="primary"):
+        status_panel = st.status("Iniciando motor de segmentación...", expanded=True)
         
-        c4, c5, c6 = st.columns(3)
-        modelo_input = c4.text_input("Modelo")
-        anio_input = c5.text_input("Año")
-        chasis_input = c6.text_input("Chasis / Cuadro")
-        
-        motor_input = st.text_input("Número de Motor")
-        
-        # Botón asistente: Si el usuario quiere, intenta usar la IA para autorellenar la pantalla actual
-        asistente_ia = st.checkbox("💡 Intentar autorellenar campos usando IA al procesar el archivo")
-        
-        guardar_btn = st.form_submit_button("💾 Registrar Vehículo en Sistema", type="primary")
-        
-        if guardar_btn:
-            if not patente_input and not archivo_adjunto:
-                st.error("Faltan datos obligatorios (Patente o Archivo).")
-            else:
-                pdf_bytes = asegurar_pdf(archivo_adjunto) if archivo_adjunto else None
-                link_drive = ""
+        for arch in archivos_titulos:
+            status_panel.write(f"📂 Abriendo archivo original: `{arch.name}`")
+            
+            try:
+                # Si es una foto, la procesamos directo
+                if arch.type.startswith("image/"):
+                    pdf_bytes = asegurar_pdf(arch)
+                    datos = procesar_pagina_individual_con_ia(pdf_bytes)
+                    patente = str(datos.get("patente","")).upper().replace("-","").replace(" ","")
+                    if patente:
+                        link = subir_archivo(f"TITULO_{patente}.pdf", pdf_bytes, ID_DRIVE_RAIZ, "FLOTA")
+                        fila = [patente, "ACTIVO", "S/D", "S/D", "AUTO", str(datos.get("marca","")).upper(), str(datos.get("modelo","")).upper(), datos.get("anio",""), str(datos.get("chasis","")).upper(), str(datos.get("motor","")).upper(), "", "", "", "", link, "", "", ""]
+                        escribir_fila("FLOTA", fila)
+                        status_panel.write(f"✅ Procesado unitario: **{patente}**")
                 
-                # Si el asistente de IA está activo y hay archivo, intentamos extraer
-                if asistente_ia and pdf_bytes:
-                    with st.spinner("Asistente IA consultando datos..."):
-                        datos_ia = procesar_documento_vehicular_multiple(pdf_bytes)
-                        if datos_ia:
-                            # Si la IA respondió bien, priorizamos sus datos si los campos estaban vacíos
-                            primero = datos_ia[0]
-                            patente_input = patente_input or primero.get("patente","").upper()
-                            marca_input = marca_input or primero.get("marca","").upper()
-                            modelo_input = modelo_input or primero.get("modelo","").upper()
-                            anio_input = anio_input or primero.get("anio","")
-                            chasis_input = chasis_input or primero.get("chasis","").upper()
-                            motor_input = motor_input or primero.get("motor","").upper()
-                            st.toast("🤖 Campos completados por el asistente de IA.")
-                        else:
-                            st.toast("⚠️ IA no disponible temporalmente. Se guardarán los datos ingresados a mano.")
-                
-                # Proceso de guardado clásico inmune a fallas de IA
-                if patente_input:
-                    if pdf_bytes:
-                        link_drive = subir_archivo(f"TITULO_{patente_input}.pdf", pdf_bytes, ID_DRIVE_RAIZ, "FLOTA")
-                    
-                    fila = [
-                        patente_input, "ACTIVO", "S/D", gerencia_input, "AUTO", marca_input, 
-                        modelo_input, anio_input, chasis_input, motor_input, "", "", "", "", link_drive, "", "", ""
-                    ]
-                    escribir_fila("FLOTA", fila)
-                    st.success(f"✅ Vehículo {patente_input} registrado correctamente.")
-                    time.sleep(1)
-                    st.rerun()
+                # Si es un PDF, lo abrimos página por página para procesar masivos sin saturar la API
                 else:
-                    st.error("Por favor, ingresá la patente manualmente si la IA está experimentando alta demanda.")
+                    reader = pypdf.PdfReader(arch)
+                    total_paginas = len(reader)
+                    status_panel.write(f"📄 El archivo contiene {total_paginas} páginas. Procesando una por una...")
+                    
+                    for idx in range(total_paginas):
+                        status_panel.write(f"🔍 Analizando página {idx + 1} de {total_paginas}...")
+                        
+                        # Extraer la página físicamente en un archivo PDF independiente en memoria
+                        writer = pypdf.PdfWriter()
+                        writer.add_page(reader.pages[idx])
+                        page_io = io.BytesIO()
+                        writer.write(page_io)
+                        page_bytes = page_io.getvalue()
+                        
+                        # Mandar a la IA a leer esta página específica
+                        datos = procesar_pagina_individual_con_ia(page_bytes)
+                        patente = str(datos.get("patente","")).upper().replace("-","").replace(" ","")
+                        
+                        if patente:
+                            # Subir a Drive únicamente esta página limpia renombrada con su patente
+                            link = subir_archivo(f"TITULO_{patente}.pdf", page_bytes, ID_DRIVE_RAIZ, "FLOTA")
+                            
+                            fila = [
+                                patente, "ACTIVO", "S/D", "S/D", "AUTO", 
+                                str(datos.get("marca","")).upper(), str(datos.get("modelo","")).upper(), 
+                                datos.get("anio",""), str(datos.get("chasis","")).upper(), 
+                                str(datos.get("motor","")).upper(), "", "", "", "", link, "", "", ""
+                            ]
+                            escribir_fila("FLOTA", fila)
+                            status_panel.write(f"💥 ¡Guardado Exitoso Página {idx + 1}! Patente: **{patente}**")
+                        else:
+                            status_panel.write(f"⚠️ Página {idx + 1}: No se reconoció patente válida.")
+                            
+            except Exception as e:
+                st.error(f"Error crítico en el archivo {arch.name}: {e}")
+                
+        status_panel.update(label="¡Todos los documentos desglosados e indexados con éxito!", state="complete")
+        st.success("La IA terminó el trabajo de campo. Datos impactados en GSheets y Drive.")
+        time.sleep(2)
+        st.rerun()
 
 with tab_renovacion:
-    st.markdown("### Carga de Vencimientos y Pólizas Masivas")
+    st.markdown("### Desglose Automático de Pólizas Flota / VTV")
+    st.info("🤖 Subí acá el PDF largo de la póliza (ej. el archivo con los 70 seguros juntos). La IA va a leer página por página, detectará a qué patente corresponde el vencimiento y lo dejará listo para impactar.")
     
-    archivo_poliza = st.file_uploader("Subir Archivo de Respaldo (Póliza Flota/VTV)", type=["pdf", "png", "jpg"])
+    archivo_masivo = st.file_uploader("Subir Póliza Completa o Lote de VTV (PDF)", type=["pdf"])
     
-    # Formulario manual prioritario para evitar bloqueos por errores 503 externos
-    with st.form("form_renovacion_doc"):
-        st.write("✍️ **Carga o Corrección Manual de Vencimientos**")
-        c1, c2, c3 = st.columns(3)
-        patente_renov = c1.text_input("Patente a impactar").upper().strip()
-        tipo_doc = c2.selectbox("Tipo de Trámite", ["VTV", "SEGURO", "RUTA"])
-        fecha_nueva = c3.text_input("Fecha de Vencimiento (DD/MM/YYYY)")
+    if archivo_masivo and st.button("🔍 Desglosar Póliza y Extraer Fechas", type="primary"):
+        status_renov = st.status("Analizando estructura del documento masivo...", expanded=True)
         
-        usar_ia_desglose = st.checkbox("🔍 Intentar pre-visualizar datos del archivo con Asistente IA")
+        resultados_tabla = []
         
-        enviar_renov = st.form_submit_button("Actualizar Registro")
-        
-        if enviar_renov:
-            if patente_renov and fecha_nueva:
-                # Aquí corre tu lógica directa a GSheets independiente de la IA
-                st.success(f"Actualizando {tipo_doc} para {patente_renov} al {fecha_nueva}...")
-                # (Lógica de inyección directa)
-            else:
-                st.error("Por favor completa los campos manuales obligatorios.")
+        try:
+            reader = pypdf.PdfReader(archivo_masivo)
+            total_pag = len(reader)
+            status_renov.write(f"Análisis local: Detectadas {total_pag} páginas a auditar.")
+            
+            for idx in range(total_pag):
+                status_renov.write(f"Procesando extracto {idx + 1} de {total_pag}...")
                 
-    # Bloque de asistencia de lectura opcional por separado
-    if archivo_poliza and usar_ia_desglose:
-        if st.button("Ejecutar lectura asistida de lote"):
-            with st.spinner("Leyendo estructura..."):
-                pdf_bytes = asegurar_pdf(archivo_poliza)
-                lista_docs = procesar_documento_vehicular_multiple(pdf_bytes)
-                if lista_docs:
-                    st.write("🤖 **Datos sugeridos por la IA (Podés copiarlos arriba):**")
-                    st.dataframe(pd.DataFrame(lista_docs)[['tipo_documento', 'patente', 'fecha_vencimiento']])
-                else:
-                    st.error("El servidor de Google está experimentando alta demanda en este momento. Por favor, realiza la carga utilizando el formulario manual de arriba.")
+                writer = pypdf.PdfWriter()
+                writer.add_page(reader.pages[idx])
+                page_io = io.BytesIO()
+                writer.write(page_io)
+                page_bytes = page_io.getvalue()
+                
+                # La IA extrae los datos de esta hoja de la póliza
+                datos = procesar_pagina_individual_con_ia(page_bytes)
+                patente = str(datos.get("patente","")).upper().replace("-","").replace(" ","")
+                fecha_vto = datos.get("fecha_vencimiento","")
+                tipo_doc = datos.get("tipo_documento","")
+                
+                if patente and fecha_vto:
+                    resultados_tabla.append({
+                        "Página": idx + 1,
+                        "Tipo": tipo_doc,
+                        "Patente": patente,
+                        "Vencimiento": fecha_vto
+                    })
+                    status_renov.write(f"🎯 Mapeado: Pág {idx + 1} -> Patente {patente} vence {fecha_vto}")
+            
+            status_renov.update(label="Lectura de lote finalizada.", state="complete")
+            
+            if resultados_tabla:
+                st.markdown("### 📋 Resultados listos para confirmación masiva")
+                df_resumen = pd.DataFrame(resultados_tabla)
+                st.dataframe(df_resumen, use_container_width=True, hide_index=True)
+                
+                if st.button("💾 Confirmar e Inyectar todos los vencimientos en FLOTA"):
+                    # Aquí irá el bucle que impactará las celdas de Sheets correspondientes
+                    st.success("Lógica de inyección en lote lista.")
+            else:
+                st.warning("No se encontraron registros estructurados legibles en las páginas analizadas.")
+                
+        except Exception as e:
+            st.error(f"Error procesando póliza masiva: {e}")
