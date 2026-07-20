@@ -2,6 +2,7 @@ import streamlit as st
 import time
 import uuid
 import json
+import io
 from utils.conexiones import escribir_fila, subir_archivo, ID_DRIVE_RAIZ
 
 st.set_page_config(page_title="DPA | Ingestión Flota", page_icon="📥", layout="wide")
@@ -42,12 +43,21 @@ with col_ia:
                 status_placeholder.info(f"⏳ Subiendo e indexando en Drive ({idx+1}/{total}): **{archivo.name}**")
                 
                 try:
-                    # Guardamos el nombre plano en una variable string aislada
                     nombre_archivo_plano = str(archivo.name)
                     bytes_crudos = archivo.read()
                     
-                    # Subida a Drive exitosa
-                    link_drive = subir_archivo(archivo, bytes_crudos, ID_DRIVE_RAIZ)
+                    # --- EL TRUCO PARA DESACTIVAR EL ERROR INTERNO ---
+                    # Creamos un pseudo-archivo nativo de Python que tiene propiedad .name 
+                    # pero NO es un objeto UploadedFile de Streamlit. Así el json.dumps interno no falla.
+                    class PseudoArchivo(io.BytesIO):
+                        def __init__(self, buf, name):
+                            super().__init__(buf)
+                            self.name = name
+
+                    archivo_mock = PseudoArchivo(bytes_crudos, nombre_archivo_plano)
+                    
+                    # Invocamos la subida pasándole nuestro objeto simulado
+                    link_drive = subir_archivo(archivo_mock, bytes_crudos, ID_DRIVE_RAIZ)
                     
                     if not link_drive or link_drive == "N/A":
                         raise ValueError("Google Drive no retornó un enlace de acceso válido.")
@@ -66,7 +76,6 @@ with col_ia:
                     else:
                         tipo_sugerido = "CEDULA_VERDE"
                         
-                    # Aislamos el diccionario garantizando que son solo STRINGS nativos de Python
                     datos_predichos = {
                         "patente": "N/A", 
                         "tipo_sugerido": str(tipo_sugerido), 
@@ -111,7 +120,14 @@ with col_manual:
                     nombre_manual_plano = str(archivo_m.name)
                     bytes_crudos_m = archivo_m.read()
                     
-                    link_drive_m = subir_archivo(archivo_m, bytes_crudos_m, ID_DRIVE_RAIZ)
+                    class PseudoArchivoManual(io.BytesIO):
+                        def __init__(self, buf, name):
+                            super().__init__(buf)
+                            self.name = name
+
+                    archivo_mock_m = PseudoArchivoManual(bytes_crudos_m, nombre_manual_plano)
+                    
+                    link_drive_m = subir_archivo(archivo_mock_m, bytes_crudos_m, ID_DRIVE_RAIZ)
                     
                     if not link_drive_m or link_drive_m == "N/A":
                         raise ValueError("No se pudo obtener enlace de Drive en la carga manual.")
