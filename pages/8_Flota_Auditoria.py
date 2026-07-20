@@ -5,7 +5,6 @@ import time
 from datetime import datetime
 from utils.conexiones import leer_hoja_completa, actualizar_estado_carga, escribir_fila
 
-# 1. Ajustamos para que mire exactamente la misma hoja que el Motor de Flota
 try: 
     HOJA_FLOTA = st.secrets.get("HOJA_FLOTA", "PENDIENTES_FLOTA")
 except: 
@@ -36,7 +35,6 @@ st.divider()
 with st.spinner(f"Buscando documentos en {HOJA_FLOTA}..."):
     datos_cola = leer_hoja_completa(HOJA_FLOTA)
 
-# 2. Ajustamos para que atrape los "PROCESADO" que ya hizo el motor
 para_auditar = [f for f in datos_cola[1:] if len(f) >= 7 and str(f[6]).strip().upper() in ["PARA_AUDITAR_FLOTA", "PROCESADO"]]
 
 if not para_auditar:
@@ -49,7 +47,6 @@ else:
             try: tipo_doc_sugerido = json.loads(fila[8]).get("tipo_sugerido", "Documento")
             except: pass
         
-        # Validación extra para que no explote si la fila no tiene nombre o fecha
         nombre = fila[2] if len(fila) > 2 else "Sin Nombre"
         fecha = fila[1] if len(fila) > 1 else "Sin Fecha"
         opciones[fila[0]] = f"📋 {tipo_doc_sugerido} | 📄 {nombre} | 📅 {fecha}"
@@ -57,12 +54,11 @@ else:
     carga_seleccionada = st.selectbox("Seleccionar registro a auditar:", options=list(opciones.keys()), format_func=lambda x: opciones[x])
     fila_actual = next(f for f in para_auditar if f[0] == carga_seleccionada)
     
-    # Manejo seguro de la longitud de la fila
     id_carga = fila_actual[0]
     link_drive = fila_actual[4] if len(fila_actual) > 4 else ""
     json_crudo = fila_actual[8] if len(fila_actual) > 8 else "{}"
     
-    # 🔍 DESESTRUCTURACIÓN Y PARSEO DEL JSON CON EDICIÓN DE CAÍDAS
+    # 🔍 PARSEO DEL JSON
     datos_flota_json = {}
     if json_crudo:
         try: 
@@ -86,7 +82,6 @@ else:
     with col_datos:
         st.markdown("### ✍️ Validación Humana de Datos")
         
-        # Recuperación segura con defaults robustos para los inputs
         patente_sugerida = str(datos_flota_json.get("patente", "N/A")).upper().strip()
         tipo_sugerido = str(datos_flota_json.get("tipo_sugerido", "CEDULA_VERDE")).upper().strip()
         
@@ -96,25 +91,38 @@ else:
             with c1:
                 patente_validada = st.text_input("Patente Definitiva (Obligatorio)", value="" if patente_sugerida == "N/A" else patente_sugerida).upper().strip()
             with c2:
+                # ACÁ ESTÁ LA MAGIA DEL FIX: Usamos el parámetro key=f"tipo_doc_{id_carga}"
                 tipo_documento = st.selectbox(
                     "Tipo Documento Confirmado", 
                     ["TITULO", "CEDULA_VERDE", "CERTIFICADO_SEGURO", "VTV", "YPF"],
-                    index=["TITULO", "CEDULA_VERDE", "CERTIFICADO_SEGURO", "VTV", "YPF"].index(tipo_sugerido) if tipo_sugerido in ["TITULO", "CEDULA_VERDE", "CERTIFICADO_SEGURO", "VTV", "YPF"] else 1
+                    index=["TITULO", "CEDULA_VERDE", "CERTIFICADO_SEGURO", "VTV", "YPF"].index(tipo_sugerido) if tipo_sugerido in ["TITULO", "CEDULA_VERDE", "CERTIFICADO_SEGURO", "VTV", "YPF"] else 1,
+                    key=f"tipo_doc_{id_carga}" 
                 )
             
-            st.markdown("#### 📜 Datos del Título / Propiedad Vehicular")
+            st.markdown("#### 📜 Datos de Propiedad y Radicación")
             c3, c4 = st.columns(2)
             with c3:
                 titular = st.text_input("Titular Registral", value=datos_flota_json.get("titular", ""))
-                cuit_cuil = st.text_input("CUIT / CUIL Titular", value=datos_flota_json.get("cuit_cuil", ""))
             with c4:
-                marca_modelo = st.text_input("Marca / Modelo", value=datos_flota_json.get("marca_modelo", ""))
-                anio_modelo = st.text_input("Año / Modelo (Año Fabricación)", value=datos_flota_json.get("anio", ""))
+                cuit_cuil = st.text_input("CUIT / CUIL Titular", value=datos_flota_json.get("cuit_cuil", ""))
+            
+            lugar_radicacion = st.text_input("Lugar de Radicación", value=datos_flota_json.get("lugar_radicacion", ""))
 
+            st.markdown("#### ⚙️ Ficha Técnica del Vehículo")
             c5, c6 = st.columns(2)
             with c5:
-                nro_chasis = st.text_input("Número de Chasis / Cuadro", value=datos_flota_json.get("nro_chasis", ""))
+                # Si es un documento viejo que todavía usaba "marca_modelo", lo intentamos rescatar
+                marca = st.text_input("Marca", value=datos_flota_json.get("marca", datos_flota_json.get("marca_modelo", "")))
+                tipo_vehiculo = st.text_input("Formato / Tipo de Vehículo", value=datos_flota_json.get("tipo_vehiculo", ""))
             with c6:
+                modelo = st.text_input("Modelo", value=datos_flota_json.get("modelo", ""))
+                # Lo mismo para "anio" vs "anio_inscripcion"
+                anio_inscripcion = st.text_input("Año de Inscripción", value=datos_flota_json.get("anio_inscripcion", datos_flota_json.get("anio", "")))
+
+            c7, c8 = st.columns(2)
+            with c7:
+                nro_chasis = st.text_input("Número de Chasis / Cuadro", value=datos_flota_json.get("nro_chasis", ""))
+            with c8:
                 nro_motor = st.text_input("Número de Motor", value=datos_flota_json.get("nro_motor", ""))
                 
             st.write("---")
@@ -130,15 +138,18 @@ else:
                 else:
                     with st.spinner("Ejecutando inyección indexada..."):
                         
-                        # Inyección relacional según el tipo de documento final
+                        # IMPORTANTE: Al agregar campos nuevos, la fila que se guarda ahora es más larga
                         if tipo_documento == "TITULO":
                             escribir_fila("FLOTA", [
                                 patente_validada, 
                                 "ALTA_POR_TITULO", 
                                 titular, 
                                 cuit_cuil, 
-                                marca_modelo, 
-                                anio_modelo, 
+                                tipo_vehiculo,
+                                lugar_radicacion,
+                                marca, 
+                                modelo,
+                                anio_inscripcion, 
                                 nro_chasis, 
                                 nro_motor, 
                                 link_drive, 
@@ -164,7 +175,6 @@ else:
                             ])
                             destino = "archivado en Historial General de Flota"
                         
-                        # 3. Guardamos el estado final en la hoja correcta
                         actualizar_estado_carga(HOJA_FLOTA, id_carga, "APROBADA")
                         st.success(f"🎉 Registro procesado y {destino}.")
                         time.sleep(1)
