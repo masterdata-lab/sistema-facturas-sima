@@ -195,29 +195,23 @@ else:
             nombre_final_drive = generar_nombre_legible(item["tipo_sugerido"], item)
             st.caption(f"📂 Guardado en Drive como:\n`{nombre_final_drive}`")
             
+            # --- BOTÓN DE INYECCIÓN INTEGRADO ---
             if st.button("✅ Validar e Inyectar", key=f"btn_ok_{item['id_interno']}", use_container_width=True, type="primary"):
-                if st.button("✅ Validar e Inyectar", key=f"btn_ok_{item['id_interno']}", use_container_width=True, type="primary"):
                 from core.flota_injector import inyectar_documento_flota
                 
-                # Ejecutamos la lógica del core
-                exito, resultado = inyectar_documento_flota(item)
+                with st.spinner("Procesando e inyectando en bases de datos..."):
+                    exito, resultado = inyectar_documento_flota(item)
                 
                 if exito:
-                    st.success(f"¡Documento inyectado y linkeado con éxito!")
+                    st.success("¡Documento visado e impactado con éxito!")
+                    # Remoción limpia del archivo procesado de la lista de auditoría
                     st.session_state.bandeja_auditoria.remove(item)
-                    time.sleep(0.5)
+                    time.sleep(0.6)
                     st.rerun()
                 else:
-                    st.error(f"Falla al inyectar: {resultado}")
-                # 1. Si es Seguro: Inyecta en HISTORIAL_SEGUROS y actualiza vencimiento en FLOTA
-                # 2. Si es otro: Pisa Celda correspondiente en la Fila de la Patente en FLOTA
-                # 3. Mueve archivo a Drive ordenado por la carpeta jerárquica legible
+                    st.error(f"Error de consistencia: {resultado}")
                 
-                st.success(f"¡Documento inyectado exitosamente!")
-                st.session_state.bandeja_auditoria.remove(item)
-                time.sleep(0.5)
-                st.rerun()
-                
+            # --- BOTÓN DE DESCARTE ---
             if st.button("🗑️ Descartar", key=f"btn_del_{item['id_interno']}", use_container_width=True):
                 st.session_state.bandeja_auditoria.remove(item)
                 st.warning("Documento eliminado de la bandeja de entrada.")
