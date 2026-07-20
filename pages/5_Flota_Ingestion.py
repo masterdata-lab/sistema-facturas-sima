@@ -1,15 +1,29 @@
 import streamlit as st
 import time
 import uuid
-from utils.conexiones import escribir_fila, subir_archivo # Usando tus conectores
+import json
+from utils.conexiones import escribir_fila, subir_archivo, ID_DRIVE_RAIZ
+
+st.set_page_config(page_title="DPA | Ingestión Flota", page_icon="📥", layout="wide")
 
 st.title("📥 Gestión de Flota: Ingestión de Documentos")
 st.markdown("Carga de archivos en lote para procesamiento cognitivo y posterior auditoría.")
 st.divider()
 
-if "logs_errores" not in st.session_state: st.session_state.logs_errores = []
+# Inicialización segura de logs de errores
+if "logs_errores" not in st.session_state: 
+    st.session_state.logs_errores = []
 
-col_ia, col_manual = st.columns([2, 1])
+# Muestra de errores en la parte superior si los hubiere
+if st.session_state.logs_errores:
+    with st.expander("⚠️ Alertas e Incidencias en la Carga", expanded=True):
+        for err in st.session_state.logs_errores:
+            st.error(err)
+        if st.button("Limpiar historial de alertas"):
+            st.session_state.logs_errores = []
+            st.rerun()
+
+col_ia, col_manual = st.columns([2, 1], gap="medium")
 
 with col_ia:
     st.subheader("⚡ Carga en Lote / Asistida")
@@ -25,54 +39,93 @@ with col_ia:
             total = len(archivos_cargados)
             
             for idx, archivo in enumerate(archivos_cargados):
-                progreso_bar.progress(int((idx + 1) / total * 100))
-                status_placeholder.info(f"⏳ Subiendo {idx+1}/{total}: **{archivo.name}**")
+                # Actualización de UI
+                porcentaje = int((idx + 1) / total * 100)
+                progreso_bar.progress(porcentaje)
+                status_placeholder.info(f"⏳ Subiendo e indexando en Drive ({idx+1}/{total}): **{archivo.name}**")
                 
                 try:
-                    # 1. Se sube el archivo físico a tu Drive temporal/raíz (Igual que en facturas)
-                    # link_drive = subir_archivo(archivo) 
-                    link_drive = "https://drive.google.com/file/d/1abc123_MOCK_ID/preview" 
+                    # 1. SUBIDA EN VIVO A DRIVE
+                    link_drive = subir_archivo(archivo, ID_DRIVE_RAIZ)
+                    
+                    if not link_drive or link_drive == "N/A":
+                        raise ValueError("Google Drive no retornó un enlace de acceso válido.")
+                    
                     id_carga = f"FLOTA_{uuid.uuid4().hex[:8].upper()}"
                     
-                    # 2. IA Engine Mock (Simula lectura inicial, luego lo corregimos en el visor)
-                    tipo_sugerido = "TITULO" if "titulo" in archivo.name.lower() else "CEDULA_VERDE"
-                    datos_predichos = {"patente": "N/A", "tipo_sugerido": tipo_sugerido, "origen": archivo.name}
+                    # 2. PREDICCIÓN DE ENRUTAMIENTO (IA MOCK)
+                    nombre_minuscula = archivo.name.lower()
+                    if "titulo" in nombre_minuscula:
+                        tipo_sugerido = "TITULO"
+                    elif "seguro" in nombre_minuscula or "poliza" in nombre_minuscula:
+                        tipo_sugerido = "CERTIFICADO_SEGURO"
+                    elif "vtv" in nombre_minuscula:
+                        tipo_sugerido = "VTV"
+                    elif "ypf" in nombre_minuscula:
+                        tipo_sugerido = "YPF"
+                    else:
+                        tipo_sugerido = "CEDULA_VERDE"
+                        
+                    datos_predichos = {
+                        "patente": "N/A", 
+                        "tipo_sugerido": tipo_sugerido, 
+                        "origen": archivo.name,
+                        "titular": "",
+                        "cuit_cuil": ""
+                    }
                     
-                    import json
-                    # Inyectamos en la hoja PENDIENTES de tu estructura maestro
+                    # 3. VOLCADO A TABLA DE TRABAJO (PENDIENTES)
                     escribir_fila("PENDIENTES", [
                         id_carga, 
                         time.strftime("%d/%m/%Y"), 
                         archivo.name, 
                         "OPERADOR_FLOTA", 
                         link_drive, 
-                        "DRIVE_ID_MOCK", 
+                        id_carga, 
                         "PARA_AUDITAR_FLOTA", 
-                        "Pendiente revisión humana", 
+                        "Subida correcta. Esperando visado humano.", 
                         json.dumps(datos_predichos)
                     ])
+                    
                 except Exception as e:
-                    st.session_state.logs_errores.append(f"Falla en {archivo.name}: {str(e)}")
+                    st.session_state.logs_errores.append(f"❌ Error crítico en {archivo.name}: {str(e)}")
             
             status_placeholder.success("🎉 Lote procesado. Los documentos esperan en la Mesa de Auditoría.")
-            time.sleep(1)
+            time.sleep(1.2)
             st.rerun()
+        else:
+            st.warning("Por favor, selecciona al menos un archivo para subir.")
 
 with col_manual:
     st.subheader("✍️ Registro Manual Directo")
     with st.form("form_alta_directa", clear_on_submit=True):
         patente_m = st.text_input("Patente sugerida / provisoria").upper().strip()
         tipo_m = st.selectbox("Tipo Documento", ["TITULO", "CEDULA_VERDE", "CERTIFICADO_SEGURO", "VTV", "YPF"])
-        archivo_m = st.file_uploader("Adjuntar archivo", type=["pdf", "png", "jpg"])
+        archivo_m = st.file_uploader("Adjuntar archivo físico", type=["pdf", "png", "jpg"])
         
         if st.form_submit_button("📥 Enviar a Cola de Control", use_container_width=True):
             if archivo_m:
-                id_carga = f"FLOTA_{uuid.uuid4().hex[:8].upper()}"
-                import json
-                datos_m = {"patente": patente_m if patente_m else "N/A", "tipo_sugerido": tipo_m, "origen": archivo_m.name}
-                escribir_fila("PENDIENTES", [
-                    id_carga, time.strftime("%d/%m/%Y"), archivo_m.name, "MANUAL", 
-                    "https://drive.google.com/file/d/1abc123_MOCK_ID/preview", "DRIVE_ID", 
-                    "PARA_AUDITAR_FLOTA", "Ingreso manual", json.dumps(datos_m)
-                ])
-                st.success("Enviado a revisión.")
+                try:
+                    link_drive_m = subir_archivo(archivo_m, ID_DRIVE_RAIZ)
+                    id_carga_m = f"FLOTA_{uuid.uuid4().hex[:8].upper()}"
+                    
+                    datos_m = {"patente": patente_m if patente_m else "N/A", "tipo_sugerido": tipo_m, "origen": archivo_m.name}
+                    
+                    escribir_fila("PENDIENTES", [
+                        id_carga_m, 
+                        time.strftime("%d/%m/%Y"), 
+                        archivo_m.name, 
+                        "MANUAL", 
+                        link_drive_m, 
+                        id_carga_m, 
+                        "PARA_AUDITAR_FLOTA", 
+                        "Ingreso manual directo.", 
+                        json.dumps(datos_m)
+                    ])
+                    st.success("¡Enviado a la cola de revisión!")
+                    time.sleep(0.8)
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"Error en carga manual: {e}")
+            else:
+                st.error("Debes adjuntar el archivo para poder enviarlo a control.")
