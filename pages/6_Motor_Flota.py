@@ -17,14 +17,14 @@ def extraer_id_drive(url_drive):
 
 def procesar_documento_flota_ia(pdf_bytes, tipo_sugerido, modelo_elegido='gemini-2.5-flash', max_reintentos=3):
     prompt = f"""
-    Actúa como un auditor experto en documentación automotriz. Extrae los datos del documento: {tipo_sugerido}.
-    Devuelve estrictamente un objeto JSON con el siguiente formato:
+    Actúa como un auditor experto en documentación automotriz. Analiza el documento de tipo: {tipo_sugerido}.
+    Devuelve estrictamente un objeto JSON estructurado con este formato exacto:
     {{
         "patente": "Patente limpia sin espacios ni guiones",
         "tipo_sugerido": "{tipo_sugerido}",
-        "titular": "Nombre del titular registral",
+        "titular": "Nombre completo del titular registral",
         "cuit_cuil": "CUIT del titular sin guiones",
-        "marca_modelo": "Marca y modelo",
+        "marca_modelo": "Marca y modelo del vehículo",
         "anio": "Año de fabricación",
         "nro_chasis": "Número de chasis largo",
         "nro_motor": "Número de motor completo"
@@ -34,6 +34,7 @@ def procesar_documento_flota_ia(pdf_bytes, tipo_sugerido, modelo_elegido='gemini
     
     for intento in range(max_reintentos):
         try:
+            # 🌟 CORRECCIÓN: Usamos el alias de modelo estable de producción
             resp = ia_client.models.generate_content(
                 model=modelo_elegido, 
                 contents=[doc, prompt], 
@@ -49,25 +50,24 @@ def procesar_documento_flota_ia(pdf_bytes, tipo_sugerido, modelo_elegido='gemini
 st.markdown("## ⚙️ Motor de Procesamiento Cognitivo (IA Flota)")
 st.divider()
 
-# 🔄 BOTÓN CRÍTICO PARA EL REPROCESO DE ALERTAS
-reprocesar_fallidos = st.checkbox("🔄 Intentar reprocesar archivos con marcas de error anteriores", value=True)
+# Dejamos activado por defecto el reprocesar fallas anteriores para rescatar los 5 que te fallaron recién
+reprocesar_fallidos = st.checkbox("🔄 Intentar reprocesar registros marcados con error anteriormente", value=True)
 loop_activo = st.checkbox("🔄 **Modo Escaneo Continuo Automático**", value=False)
 iniciar_manual = False if loop_activo else st.button("▶️ Iniciar Extracción Cognitiva Manual", type="primary")
 
 if loop_activo or iniciar_manual:
-    with st.spinner("Buscando en PENDIENTES_FLOTA..."):
+    with st.spinner("Buscando en cola dedicada PENDIENTES_FLOTA..."):
         datos_cola = leer_hoja_completa("PENDIENTES_FLOTA")
         
-    # Filtro inteligente: captura tanto lo PENDIENTE como lo que dio ERROR previo si el checkbox está activo
     pendientes = [
         f for f in datos_cola[1:] 
         if len(f) >= 7 and (f[6] == "PENDIENTE_FLOTA" or (reprocesar_fallidos and f[6].startswith("ERROR")))
     ]
     
     if not pendientes:
-        st.info("✅ No hay documentos de flota esperando procesamiento.")
+        st.info("✅ No hay documentos de flota esperando procesamiento en este momento.")
     else:
-        st.success(f"Encontrados {len(pendientes)} registros. Procesando...")
+        st.success(f"Encontrados {len(pendientes)} registros listos para lectura. Procesando...")
         barra_general = st.progress(0)
         status_text = st.empty()
         exitosos, fallidos = 0, 0
@@ -76,15 +76,15 @@ if loop_activo or iniciar_manual:
             id_carga, nombre_archivo, link_drive = fila[0], fila[2], fila[4]
             tipo_sugerido = fila[7] if len(fila) > 7 else "TITULO"
             
-            status_text.markdown(f"⏳ **Leyendo {i+1}/{len(pendientes)}:** {nombre_archivo}")
+            status_text.markdown(f"⏳ **Analizando archivo {i+1}/{len(pendientes)}:** {nombre_archivo}")
             
             try:
                 id_drive = extraer_id_drive(link_drive)
                 file_bytes = descargar_archivo(id_drive)
                 
-                if not file_bytes: raise Exception("Error al bajar el fragmento.")
+                if not file_bytes: raise Exception("Error al descargar archivo desde Google Drive.")
                 
-                # Ejecutamos con el string del modelo homologado 'gemini-2.5-flash'
+                # Invocación con el modelo oficial homologado
                 datos_extraidos = procesar_documento_flota_ia(file_bytes, tipo_sugerido, modelo_elegido='gemini-2.5-flash')
                 
                 actualizar_estado_carga("PENDIENTES_FLOTA", id_carga, "PARA_AUDITAR_FLOTA", json.dumps(datos_extraidos, ensure_ascii=False))
@@ -98,15 +98,16 @@ if loop_activo or iniciar_manual:
             barra_general.progress((i + 1) / len(pendientes))
             
         status_text.empty()
-        st.markdown("### 📊 Reporte:")
+        st.markdown("### 📊 Reporte Final del Motor:")
         c1, c2 = st.columns(2)
-        c1.metric("✅ Exitosos", exitosos)
-        c2.metric("⚠️ Fallas", fallidos)
+        c1.metric("✅ Procesados con Éxito", exitosos)
+        c2.metric("⚠️ Fallas Registradas", fallidos)
+        if fallidos == 0 and exitosos > 0: st.balloons()
 
     if loop_activo:
         st.write("---")
         reloj = st.empty()
         for count in range(60, 0, -1):
-            reloj.info(f"⏱️ Próximo barrido en: **{count} segundos**...")
+            reloj.info(f"⏱️ Próximo escaneo en: **{count} segundos**...")
             time.sleep(1)
         st.rerun()
