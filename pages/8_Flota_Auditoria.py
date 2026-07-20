@@ -91,7 +91,6 @@ else:
             with c1:
                 patente_validada = st.text_input("Patente Definitiva (Obligatorio)", value="" if patente_sugerida == "N/A" else patente_sugerida).upper().strip()
             with c2:
-                # ACÁ ESTÁ LA MAGIA DEL FIX: Usamos el parámetro key=f"tipo_doc_{id_carga}"
                 tipo_documento = st.selectbox(
                     "Tipo Documento Confirmado", 
                     ["TITULO", "CEDULA_VERDE", "CERTIFICADO_SEGURO", "VTV", "YPF"],
@@ -104,19 +103,17 @@ else:
             with c3:
                 titular = st.text_input("Titular Registral", value=datos_flota_json.get("titular", ""))
             with c4:
-                cuit_cuil = st.text_input("CUIT / CUIL Titular", value=datos_flota_json.get("cuit_cuil", ""))
+                cuit_cuil = st.text_input("CUIT / CUIL Empresa (Titular)", value=datos_flota_json.get("cuit_cuil", ""))
             
             lugar_radicacion = st.text_input("Lugar de Radicación", value=datos_flota_json.get("lugar_radicacion", ""))
 
             st.markdown("#### ⚙️ Ficha Técnica del Vehículo")
             c5, c6 = st.columns(2)
             with c5:
-                # Si es un documento viejo que todavía usaba "marca_modelo", lo intentamos rescatar
                 marca = st.text_input("Marca", value=datos_flota_json.get("marca", datos_flota_json.get("marca_modelo", "")))
                 tipo_vehiculo = st.text_input("Formato / Tipo de Vehículo", value=datos_flota_json.get("tipo_vehiculo", ""))
             with c6:
                 modelo = st.text_input("Modelo", value=datos_flota_json.get("modelo", ""))
-                # Lo mismo para "anio" vs "anio_inscripcion"
                 anio_inscripcion = st.text_input("Año de Inscripción", value=datos_flota_json.get("anio_inscripcion", datos_flota_json.get("anio", "")))
 
             c7, c8 = st.columns(2)
@@ -138,24 +135,37 @@ else:
                 else:
                     with st.spinner("Ejecutando inyección indexada..."):
                         
-                        # IMPORTANTE: Al agregar campos nuevos, la fila que se guarda ahora es más larga
                         if tipo_documento == "TITULO":
-                            escribir_fila("FLOTA", [
-                                patente_validada, 
-                                "ALTA_POR_TITULO", 
-                                titular, 
-                                cuit_cuil, 
-                                tipo_vehiculo,
-                                lugar_radicacion,
-                                marca, 
-                                modelo,
-                                anio_inscripcion, 
-                                nro_chasis, 
-                                nro_motor, 
-                                link_drive, 
-                                datetime.now().strftime("%d/%m/%Y")
-                            ])
-                            destino = "inyectado en Base Maestra FLOTA con ficha técnica completa"
+                            # MAPEO A LA NUEVA ESTRUCTURA LIMPIA DE 25 COLUMNAS
+                            datos_a_inyectar = [
+                                patente_validada,           # 1. Patente
+                                "ALTA_POR_TITULO",          # 2. Estado
+                                titular,                    # 3. Titular
+                                cuit_cuil,                  # 4. CUIT Empresa
+                                lugar_radicacion,           # 5. Radicacion
+                                "",                         # 6. Gerencia Actual
+                                tipo_vehiculo,              # 7. Tipo Vehiculo
+                                marca,                      # 8. Marca
+                                modelo,                     # 9. Modelo
+                                anio_inscripcion,           # 10. Año
+                                nro_chasis,                 # 11. Chasis
+                                nro_motor,                  # 12. Motor
+                                "",                         # 13. Vto VTV
+                                "",                         # 14. Status VTV
+                                "",                         # 15. Vto Seguro
+                                "",                         # 16. Status Seguro
+                                "",                         # 17. Vto RUTA
+                                "",                         # 18. Vto Tarj YPF
+                                link_drive,                 # 19. Link Titulo / Alta
+                                "",                         # 20. Link VTV
+                                "",                         # 21. Link Cert Seguro
+                                "",                         # 22. Link Poliza General
+                                "",                         # 23. Link RUTA
+                                "",                         # 24. Link Tarj YPF
+                                f"Alta Automática: {datetime.now().strftime('%d/%m/%Y')}" # 25. Observaciones
+                            ]
+                            escribir_fila("FLOTA", datos_a_inyectar)
+                            destino = "inyectado en Base Maestra FLOTA (Nueva Estructura)"
                         
                         elif tipo_documento == "CERTIFICADO_SEGURO":
                             escribir_fila("HISTORIAL_SEGUROS", [
