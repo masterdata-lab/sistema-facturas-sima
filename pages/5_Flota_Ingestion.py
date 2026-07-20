@@ -196,7 +196,19 @@ else:
             st.caption(f"📂 Guardado en Drive como:\n`{nombre_final_drive}`")
             
             if st.button("✅ Validar e Inyectar", key=f"btn_ok_{item['id_interno']}", use_container_width=True, type="primary"):
-                # --- AQUÍ EJECUTA LAS REGLAS DE NEGOCIO ---
+                if st.button("✅ Validar e Inyectar", key=f"btn_ok_{item['id_interno']}", use_container_width=True, type="primary"):
+                from core.flota_injector import inyectar_documento_flota
+                
+                # Ejecutamos la lógica del core
+                exito, resultado = inyectar_documento_flota(item)
+                
+                if exito:
+                    st.success(f"¡Documento inyectado y linkeado con éxito!")
+                    st.session_state.bandeja_auditoria.remove(item)
+                    time.sleep(0.5)
+                    st.rerun()
+                else:
+                    st.error(f"Falla al inyectar: {resultado}")
                 # 1. Si es Seguro: Inyecta en HISTORIAL_SEGUROS y actualiza vencimiento en FLOTA
                 # 2. Si es otro: Pisa Celda correspondiente en la Fila de la Patente en FLOTA
                 # 3. Mueve archivo a Drive ordenado por la carpeta jerárquica legible
