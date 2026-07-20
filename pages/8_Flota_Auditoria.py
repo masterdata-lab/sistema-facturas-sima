@@ -5,10 +5,11 @@ import time
 from datetime import datetime
 from utils.conexiones import leer_hoja_completa, actualizar_estado_carga, escribir_fila
 
+# 1. Ajustamos para que mire exactamente la misma hoja que el Motor de Flota
 try: 
-    H_PENDIENTES = st.secrets["HOJA_PENDIENTES"]
+    HOJA_FLOTA = st.secrets.get("HOJA_FLOTA", "PENDIENTES_FLOTA")
 except: 
-    H_PENDIENTES = "PENDIENTES"
+    HOJA_FLOTA = "PENDIENTES_FLOTA"
 
 st.set_page_config(page_title="DPA | Auditoría de Flota", page_icon="⚖️", layout="wide", initial_sidebar_state="collapsed")
 
@@ -32,10 +33,11 @@ def extraer_id_drive(url_drive):
 st.markdown("## ⚖️ Módulo de Auditoría Humana: Control de Flota")
 st.divider()
 
-with st.spinner("Buscando documentos de flota pendientes..."):
-    datos_cola = leer_hoja_completa(H_PENDIENTES)
+with st.spinner(f"Buscando documentos en {HOJA_FLOTA}..."):
+    datos_cola = leer_hoja_completa(HOJA_FLOTA)
 
-para_auditar = [f for f in datos_cola[1:] if len(f) >= 7 and f[6] == "PARA_AUDITAR_FLOTA"]
+# 2. Ajustamos para que atrape los "PROCESADO" que ya hizo el motor
+para_auditar = [f for f in datos_cola[1:] if len(f) >= 7 and str(f[6]).strip().upper() in ["PARA_AUDITAR_FLOTA", "PROCESADO"]]
 
 if not para_auditar:
     st.success("🎉 No hay documentos de flota pendientes de visado humano.")
@@ -46,12 +48,19 @@ else:
         if len(fila) >= 9 and fila[8]:
             try: tipo_doc_sugerido = json.loads(fila[8]).get("tipo_sugerido", "Documento")
             except: pass
-        opciones[fila[0]] = f"📋 {tipo_doc_sugerido} | 📄 {fila[2]} | 📅 {fila[1]}"
+        
+        # Validación extra para que no explote si la fila no tiene nombre o fecha
+        nombre = fila[2] if len(fila) > 2 else "Sin Nombre"
+        fecha = fila[1] if len(fila) > 1 else "Sin Fecha"
+        opciones[fila[0]] = f"📋 {tipo_doc_sugerido} | 📄 {nombre} | 📅 {fecha}"
         
     carga_seleccionada = st.selectbox("Seleccionar registro a auditar:", options=list(opciones.keys()), format_func=lambda x: opciones[x])
     fila_actual = next(f for f in para_auditar if f[0] == carga_seleccionada)
     
-    id_carga, fecha_ingreso, nombre_archivo, operador, link_drive, _, estado_actual, _, json_crudo = fila_actual[0:9]
+    # Manejo seguro de la longitud de la fila
+    id_carga = fila_actual[0]
+    link_drive = fila_actual[4] if len(fila_actual) > 4 else ""
+    json_crudo = fila_actual[8] if len(fila_actual) > 8 else "{}"
     
     # 🔍 DESESTRUCTURACIÓN Y PARSEO DEL JSON CON EDICIÓN DE CAÍDAS
     datos_flota_json = {}
@@ -123,7 +132,6 @@ else:
                         
                         # Inyección relacional según el tipo de documento final
                         if tipo_documento == "TITULO":
-                            # Inyectamos en FLOTA con todas las celdas necesarias para el Título
                             escribir_fila("FLOTA", [
                                 patente_validada, 
                                 "ALTA_POR_TITULO", 
@@ -156,13 +164,14 @@ else:
                             ])
                             destino = "archivado en Historial General de Flota"
                         
-                        actualizar_estado_carga(H_PENDIENTES, id_carga, "APROBADA")
+                        # 3. Guardamos el estado final en la hoja correcta
+                        actualizar_estado_carga(HOJA_FLOTA, id_carga, "APROBADA")
                         st.success(f"🎉 Registro procesado y {destino}.")
                         time.sleep(1)
                         st.rerun()
             
             if btn_descartar:
-                actualizar_estado_carga(H_PENDIENTES, id_carga, "DESCARTADO")
+                actualizar_estado_carga(HOJA_FLOTA, id_carga, "DESCARTADO")
                 st.warning("Documento descartado de la cola.")
                 time.sleep(0.8)
                 st.rerun()
