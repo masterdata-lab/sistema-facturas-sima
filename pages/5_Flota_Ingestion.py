@@ -44,8 +44,9 @@ with col_ia:
                 status_placeholder.info(f"⏳ Subiendo e indexando en Drive ({idx+1}/{total}): **{archivo.name}**")
                 
                 try:
-                    # AJUSTE DE FIRMA: Llamada adaptada a tu conector nativo (solo pide el archivo)
-                    link_drive = subir_archivo(archivo)
+                    # --- FIRMA CORREGIDA: Leemos los bytes del archivo y pasamos la carpeta destino ---
+                    bytes_crudos = archivo.read()
+                    link_drive = subir_archivo(bytes_crudos, ID_DRIVE_RAIZ)
                     
                     if not link_drive or link_drive == "N/A":
                         raise ValueError("Google Drive no retornó un enlace de acceso válido.")
@@ -103,8 +104,9 @@ with col_manual:
         if st.form_submit_button("📥 Enviar a Cola de Control", use_container_width=True):
             if archivo_m:
                 try:
-                    # AJUSTE DE FIRMA: Carga manual corregida igualando el entorno de facturas
-                    link_drive_m = subir_archivo(archivo_m)
+                    # --- FIRMA CORREGIDA EN CARGA MANUAL ---
+                    bytes_crudos_m = archivo_m.read()
+                    link_drive_m = subir_archivo(bytes_crudos_m, ID_DRIVE_RAIZ)
                     
                     if not link_drive_m or link_drive_m == "N/A":
                         raise ValueError("No se pudo obtener enlace de Drive en la carga manual.")
