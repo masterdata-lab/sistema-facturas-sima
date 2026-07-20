@@ -37,10 +37,13 @@ with col_opts_2:
     reprocesar_errores = st.checkbox("🔄 Intentar reprocesar registros con error", value=True)
     loop_activo = st.checkbox("🔄 Modo Loop Automático (Procesar cada 60 seg)", value=False)
 
-# 2. IA Blindada 
-def procesar_documento_flota_ia(pdf_bytes, tipo_sugerido, modelo_ia):
+# 2. IA Blindada CON EXTRACCIÓN LITERAL
+def procesar_documento_flota_ia(pdf_bytes, tipo_sugerido, modelo_ia, max_reintentos=5):
     plantilla_prompt = """
-    Actúa como un auditor experto en documentación automotriz. Analiza el documento de tipo: TIPO_DOCUMENTO.
+    Actúa como un auditor experto en documentación automotriz de Argentina. Analiza el documento de tipo: TIPO_DOCUMENTO.
+    Extrae los datos solicitados. 
+    Para 'tipo_vehiculo', transcribe EXACTAMENTE la categoría o tipo que figura impreso en el documento oficial (ej: SEDAN 4 PUERTAS, PICK-UP, FURGON, CAMION, MOTOVEHICULO, etc.). 
+    Para 'anio_inscripcion' busca específicamente el año de inscripción inicial o patentamiento.
     Devuelve estrictamente un objeto JSON estructurado con este formato exacto.
     NO envuelvas la respuesta en bloques de código markdown (```json ... ```). Devuelve solo el texto plano del JSON:
     {
@@ -48,34 +51,44 @@ def procesar_documento_flota_ia(pdf_bytes, tipo_sugerido, modelo_ia):
         "tipo_sugerido": "TIPO_DOCUMENTO",
         "titular": "Nombre completo del titular registral",
         "cuit_cuil": "CUIT del titular sin guiones",
-        "marca_modelo": "Marca y modelo del vehículo",
-        "anio": "Año de fabricación",
+        "tipo_vehiculo": "Transcribir tipo textual y literal del documento",
+        "lugar_radicacion": "Localidad y/o provincia de radicación",
+        "marca": "Solo la marca del vehículo",
+        "modelo": "Solo el modelo del vehículo",
+        "anio_inscripcion": "Año de inscripción inicial",
         "nro_chasis": "Número de chasis largo",
         "nro_motor": "Número de motor completo"
     }
     """
     prompt = plantilla_prompt.replace("TIPO_DOCUMENTO", str(tipo_sugerido))
-    
     doc = types.Part.from_bytes(data=pdf_bytes, mime_type="application/pdf")
-    resp = ia_client.models.generate_content(
-        model=modelo_ia, 
-        contents=[doc, prompt], 
-        config=types.GenerateContentConfig(response_mime_type="application/json")
-    )
     
-    texto_limpio = resp.text.strip()
-    if texto_limpio.startswith("```"):
-        texto_limpio = texto_limpio.split("\n", 1)[1]
-    texto_limpio = texto_limpio.rstrip("`").strip()
-    
-    return json.loads(texto_limpio)
+    for intento in range(max_reintentos):
+        try:
+            resp = ia_client.models.generate_content(
+                model=modelo_ia, 
+                contents=[doc, prompt], 
+                config=types.GenerateContentConfig(response_mime_type="application/json")
+            )
+            texto_limpio = resp.text.strip()
+            if texto_limpio.startswith("```"):
+                texto_limpio = texto_limpio.split("\n", 1)[1]
+            texto_limpio = texto_limpio.rstrip("`").strip()
+            return json.loads(texto_limpio)
+            
+        except Exception as e:
+            if "503" in str(e) or "429" in str(e) or "quota" in str(e).lower():
+                if intento < max_reintentos - 1:
+                    time.sleep(15) 
+                    continue
+            raise e
 
 # --- 🎯 MAPEO DE COLUMNAS 🎯 ---
-COL_ID = 0         # Columna A
-COL_ARCHIVO = 2    # Columna C 
-COL_TIPO = 3       # Columna D 
-COL_LINK = 4       # Columna E 
-COL_ESTADO = 6     # Columna G 
+COL_ID = 0         
+COL_ARCHIVO = 2    
+COL_TIPO = 3       
+COL_LINK = 4       
+COL_ESTADO = 6     
 
 st.markdown("---")
 # --- BOTONES DE CONTROL ---
