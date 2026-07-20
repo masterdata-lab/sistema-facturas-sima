@@ -33,13 +33,13 @@ def extraer_id_drive(url_drive):
 
 col_opts_1, col_opts_2 = st.columns(2)
 with col_opts_1:
-    modelo_ia = st.selectbox("🧠 Seleccionar Cerebro IA", ["gemini-3.1-flash-lite"])
+    st.info("🧠 Enrutador de IA Activo: 3.5-Flash ➡️ Failover a 3.1-Flash-Lite")
 with col_opts_2:
     reprocesar_errores = st.checkbox("🔄 Intentar reprocesar registros con error", value=True)
     loop_activo = st.checkbox("🔄 Modo Loop Automático (Procesar cada 60 seg)", value=False)
 
-# 2. IA Blindada CON TIMEOUT DE 45 SEGUNDOS Y CUENTA REGRESIVA VISUAL
-def procesar_documento_flota_ia(pdf_bytes, tipo_sugerido, modelo_ia, status_text_ui, contexto_ui, max_reintentos=3):
+# 2. IA Blindada CON ENRUTADOR DE EMERGENCIA (FAILOVER)
+def procesar_documento_flota_ia(pdf_bytes, tipo_sugerido, status_text_ui, contexto_ui):
     plantilla_prompt = """
     Actúa como un auditor experto en documentación automotriz de Argentina. Analiza el documento de tipo: TIPO_DOCUMENTO.
     Extrae los datos solicitados. 
@@ -64,44 +64,57 @@ def procesar_documento_flota_ia(pdf_bytes, tipo_sugerido, modelo_ia, status_text
     prompt = plantilla_prompt.replace("TIPO_DOCUMENTO", str(tipo_sugerido))
     doc = types.Part.from_bytes(data=pdf_bytes, mime_type="application/pdf")
     
-    for intento in range(max_reintentos):
-        status_text_ui.markdown(f"⏳ **{contexto_ui}** | 🔄 Intento {intento + 1}/{max_reintentos} (Esperando IA...)")
-        
-        try:
-            with concurrent.futures.ThreadPoolExecutor() as executor:
-                future = executor.submit(
-                    ia_client.models.generate_content,
-                    model=modelo_ia,
-                    contents=[doc, prompt],
-                    config=types.GenerateContentConfig(response_mime_type="application/json")
-                )
-                resp = future.result(timeout=45)
+    # Lista de modelos en orden de prioridad
+    modelos_disponibles = ["gemini-3.5-flash", "gemini-3.1-flash-lite"]
+    max_intentos_por_modelo = 2
+    
+    for modelo in modelos_disponibles:
+        for intento in range(max_intentos_por_modelo):
+            status_text_ui.markdown(f"⏳ **{contexto_ui}** | 🧠 Modelo: **{modelo}** | 🔄 Intento {intento + 1}/{max_intentos_por_modelo}")
+            
+            try:
+                with concurrent.futures.ThreadPoolExecutor() as executor:
+                    future = executor.submit(
+                        ia_client.models.generate_content,
+                        model=modelo,
+                        contents=[doc, prompt],
+                        config=types.GenerateContentConfig(response_mime_type="application/json")
+                    )
+                    resp = future.result(timeout=45)
+                    
+                texto_limpio = resp.text.strip()
+                if texto_limpio.startswith("```"):
+                    texto_limpio = texto_limpio.split("\n", 1)[1]
+                texto_limpio = texto_limpio.rstrip("`").strip()
+                return json.loads(texto_limpio)
                 
-            texto_limpio = resp.text.strip()
-            if texto_limpio.startswith("```"):
-                texto_limpio = texto_limpio.split("\n", 1)[1]
-            texto_limpio = texto_limpio.rstrip("`").strip()
-            return json.loads(texto_limpio)
-            
-        except concurrent.futures.TimeoutError:
-            if intento < max_reintentos - 1:
-                # Cuenta regresiva visual para Timeout
-                for seg in range(5, 0, -1):
-                    status_text_ui.warning(f"⚠️ La IA tardó demasiado. Reintentando ({intento + 2}/{max_reintentos}) en **{seg}s**...")
-                    time.sleep(1)
-                continue
-            raise Exception("TIMEOUT_IA: Google no respondió después de 45 segundos. Servidor saturado.")
-            
-        except Exception as e:
-            if "503" in str(e) or "429" in str(e) or "quota" in str(e).lower():
-                if intento < max_reintentos - 1:
-                    # Cuenta regresiva visual para Errores 503/429
-                    codigo_error = str(e)[:3] if len(str(e)) >= 3 else "API"
-                    for seg in range(10, 0, -1):
-                        status_text_ui.warning(f"⚠️ Servidor de Google saturado (Error {codigo_error}). Pausa activa: **{seg}s**...")
+            except concurrent.futures.TimeoutError:
+                if intento < max_intentos_por_modelo - 1:
+                    for seg in range(3, 0, -1):
+                        status_text_ui.warning(f"⚠️ {modelo} tardó demasiado. Reintentando en **{seg}s**...")
                         time.sleep(1)
                     continue
-            raise e
+                else:
+                    status_text_ui.error(f"⚠️ {modelo} falló por Timeout. Saltando a modelo de emergencia...")
+                    time.sleep(1.5)
+                    
+            except Exception as e:
+                if "503" in str(e) or "429" in str(e) or "quota" in str(e).lower():
+                    if intento < max_intentos_por_modelo - 1:
+                        codigo_error = str(e)[:3] if len(str(e)) >= 3 else "API"
+                        for seg in range(5, 0, -1):
+                            status_text_ui.warning(f"⚠️ {modelo} saturado (Error {codigo_error}). Pausa: **{seg}s**...")
+                            time.sleep(1)
+                        continue
+                    else:
+                        status_text_ui.error(f"⚠️ {modelo} sigue saturado. Activando enrutador a modelo Lite...")
+                        time.sleep(1.5)
+                else:
+                    # Si es otro error (ej: PDF corrupto), lo lanza directamente sin probar el otro modelo
+                    raise e
+
+    # Si sale del bucle, es porque fallaron AMBOS modelos
+    raise Exception("TIMEOUT_GLOBAL: Ambos modelos (Flash y Lite) se encuentran saturados. Intente más tarde.")
 
 # --- 🎯 MAPEO DE COLUMNAS 🎯 ---
 COL_ID = 0         
@@ -162,8 +175,9 @@ if btn_iniciar or loop_activo:
                 if not pdf_bytes:
                     raise Exception("No se pudo descargar el archivo desde Google Drive.")
                     
+                # Ya no le pasamos modelo_ia porque la función lo maneja internamente
                 resultado_json = procesar_documento_flota_ia(
-                    pdf_bytes, tipo_doc, modelo_ia, status_text, contexto
+                    pdf_bytes, tipo_doc, status_text, contexto
                 )
                 
                 json_str = json.dumps(resultado_json, ensure_ascii=False)
