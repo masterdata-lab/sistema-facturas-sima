@@ -2,6 +2,7 @@ import streamlit as st
 import time
 import json
 import re
+import concurrent.futures
 from google.genai import types
 
 # 🔌 Importamos las conexiones de tu ecosistema real
@@ -37,8 +38,8 @@ with col_opts_2:
     reprocesar_errores = st.checkbox("🔄 Intentar reprocesar registros con error", value=True)
     loop_activo = st.checkbox("🔄 Modo Loop Automático (Procesar cada 60 seg)", value=False)
 
-# 2. IA Blindada CON EXTRACCIÓN LITERAL
-def procesar_documento_flota_ia(pdf_bytes, tipo_sugerido, modelo_ia, max_reintentos=5):
+# 2. IA Blindada CON TIMEOUT DE 45 SEGUNDOS
+def procesar_documento_flota_ia(pdf_bytes, tipo_sugerido, modelo_ia, status_text_ui, contexto_ui, max_reintentos=3):
     plantilla_prompt = """
     Actúa como un auditor experto en documentación automotriz de Argentina. Analiza el documento de tipo: TIPO_DOCUMENTO.
     Extrae los datos solicitados. 
@@ -63,23 +64,39 @@ def procesar_documento_flota_ia(pdf_bytes, tipo_sugerido, modelo_ia, max_reinten
     prompt = plantilla_prompt.replace("TIPO_DOCUMENTO", str(tipo_sugerido))
     doc = types.Part.from_bytes(data=pdf_bytes, mime_type="application/pdf")
     
+    # Redujimos los reintentos a 3 para no trabar el proceso entero
     for intento in range(max_reintentos):
+        status_text_ui.markdown(f"⏳ **{contexto_ui}** | 🔄 Intento {intento + 1}/{max_reintentos} (Esperando IA...)")
+        
         try:
-            resp = ia_client.models.generate_content(
-                model=modelo_ia, 
-                contents=[doc, prompt], 
-                config=types.GenerateContentConfig(response_mime_type="application/json")
-            )
+            # Usamos un ejecutor de hilos para forzar el corte si tarda más de 45 segundos
+            with concurrent.futures.ThreadPoolExecutor() as executor:
+                future = executor.submit(
+                    ia_client.models.generate_content,
+                    model=modelo_ia,
+                    contents=[doc, prompt],
+                    config=types.GenerateContentConfig(response_mime_type="application/json")
+                )
+                resp = future.result(timeout=45) # ⏱️ LÍMITE DE TIEMPO: 45 SEGUNDOS
+                
             texto_limpio = resp.text.strip()
             if texto_limpio.startswith("```"):
                 texto_limpio = texto_limpio.split("\n", 1)[1]
             texto_limpio = texto_limpio.rstrip("`").strip()
             return json.loads(texto_limpio)
             
+        except concurrent.futures.TimeoutError:
+            if intento < max_reintentos - 1:
+                status_text_ui.warning(f"⚠️ La IA tardó demasiado. Reintentando ({intento + 2}/{max_reintentos})...")
+                time.sleep(5)
+                continue
+            raise Exception("TIMEOUT_IA: Google no respondió después de 45 segundos. Servidor saturado.")
+            
         except Exception as e:
             if "503" in str(e) or "429" in str(e) or "quota" in str(e).lower():
                 if intento < max_reintentos - 1:
-                    time.sleep(15) 
+                    status_text_ui.warning(f"⚠️ Servidor de Google saturado (Error {str(e)[:3]}). Pausa de 10s...")
+                    time.sleep(10) 
                     continue
             raise e
 
@@ -119,7 +136,7 @@ if btn_iniciar or loop_activo:
     if not pendientes:
         st.info(f"✅ No se encontraron documentos 'PENDIENTE_FLOTA' en la hoja {HOJA_FLOTA}.")
     else:
-        st.success(f"🚀 Encontrados {len(pendientes)} documentos. Procesando con Drive y Gemini...")
+        st.success(f"🚀 Encontrados {len(pendientes)} documentos en cola.")
         barra_general = st.progress(0)
         status_text = st.empty()
         exitos = 0
@@ -130,31 +147,34 @@ if btn_iniciar or loop_activo:
             nombre_archivo = fila[COL_ARCHIVO] if len(fila) > COL_ARCHIVO else f"Fila_{i+1}"
             link_drive = fila[COL_LINK] if len(fila) > COL_LINK else ""
             tipo_doc = fila[COL_TIPO] if len(fila) > COL_TIPO else "Título Digital"
-            
-            status_text.markdown(f"⏳ **{i+1}/{len(pendientes)}:** {nombre_archivo}")
+            contexto = f"{i+1}/{len(pendientes)}: {nombre_archivo}"
             
             try:
                 id_drive = extraer_id_drive(link_drive)
                 if not id_drive:
                     raise Exception("El link de Drive está vacío o es inválido.")
                     
+                status_text.markdown(f"⏳ **{contexto}** | Descargando PDF de Drive...")
                 pdf_bytes = descargar_archivo(id_drive)
                 if not pdf_bytes:
                     raise Exception("No se pudo descargar el archivo desde Google Drive.")
                     
-                resultado_json = procesar_documento_flota_ia(pdf_bytes, tipo_doc, modelo_ia)
+                # Le pasamos el texto de status a la función para que actualice la UI en vivo
+                resultado_json = procesar_documento_flota_ia(
+                    pdf_bytes, tipo_doc, modelo_ia, status_text, contexto
+                )
                 
                 json_str = json.dumps(resultado_json, ensure_ascii=False)
                 actualizar_estado_carga(HOJA_FLOTA, id_carga, "PROCESADO", json_str)
-                
                 exitos += 1
+                
             except Exception as e:
-                error_msg = str(e)[:100]
+                error_msg = str(e)[:150]
                 actualizar_estado_carga(HOJA_FLOTA, id_carga, f"ERROR_IA_FLOTA: {error_msg}")
                 fallas += 1
                 
             barra_general.progress((i + 1) / len(pendientes))
-            time.sleep(2) 
+            time.sleep(1) 
             
         status_text.empty()
         st.subheader("📊 Resumen del Proceso:")
