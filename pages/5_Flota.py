@@ -43,31 +43,48 @@ def asegurar_pdf(archivo):
 
 def procesar_pagina_individual_con_ia(pdf_page_bytes):
     """
-    Envía una sola página formateada a la IA con lógica de reintento robusta.
+    Envía una sola página a la IA forzando un esquema JSON estricto mediante la API.
     """
     prompt = """
-    Analiza este documento vehicular argentino (es una sola página o extracto).
-    1. Identifica qué tipo es: "TITULO", "VTV", "SEGURO", "RUTA" o "DESCONOCIDO".
-    2. Extrae la PATENTE (dominio). Sin espacios ni guiones.
-    3. Si es TITULO: extrae marca, modelo, año, chasis y motor.
-    4. Si es VTV, SEGURO o RUTA: extrae la FECHA DE VENCIMIENTO (formato DD/MM/YYYY).
-    Devuelve JSON estricto:
+    Analiza este documento vehicular argentino. Extrae los datos y responde UNICAMENTE con el objeto JSON solicitado.
+    Estructura requerida:
     {
-        "tipo_documento": "TITULO", "patente": "AB123CD",
-        "marca": "", "modelo": "", "anio": "", "chasis": "", "motor": "", "fecha_vencimiento": ""
+        "tipo_documento": "TITULO", 
+        "patente": "AB123CD",
+        "marca": "CORVEN", 
+        "modelo": "TRIAX", 
+        "anio": "2022", 
+        "chasis": "8CV...", 
+        "motor": "162...", 
+        "fecha_vencimiento": "DD/MM/YYYY"
     }
+    Si es TITULO rellena los datos técnicos. Si es VTV, SEGURO o RUTA prioriza la fecha_vencimiento. 
+    No agregues texto explicativo ni formato markdown fuera del JSON.
     """
     doc = types.Part.from_bytes(data=pdf_page_bytes, mime_type="application/pdf")
     
     for intento in range(3):
         try:
             resp = ia_client.models.generate_content(
-                model='gemini-3.5-flash', contents=[doc, prompt],
-                config=types.GenerateContentConfig(response_mime_type="application/json", temperature=0.1)
+                model='gemini-3.5-flash',
+                contents=[doc, prompt],
+                config=types.GenerateContentConfig(
+                    response_mime_type="application/json",
+                    temperature=0.1
+                )
             )
-            return json.loads(resp.text)
+            
+            # Limpieza de seguridad por si el modelo ignora el constraint e inyecta bloques markdown
+            texto_limpio = resp.text.strip()
+            if texto_limpio.startswith("```"):
+                texto_limpio = texto_limpio.split("```")[1]
+                if texto_limpio.startswith("json"):
+                    texto_limpio = texto_limpio[4:]
+            texto_limpio = texto_limpio.strip("` \n")
+            
+            return json.loads(texto_limpio)
         except Exception as e:
-            if "503" in str(e) and intento < 2:
+            if ("503" in str(e) or "429" in str(e)) and intento < 2:
                 time.sleep(2 ** intento)
                 continue
             raise e
