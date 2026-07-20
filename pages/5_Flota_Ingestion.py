@@ -44,12 +44,9 @@ with col_ia:
                 try:
                     bytes_crudos = archivo.read()
                     
-                    # --- INYECCIÓN POR KEYWORD ARGUMENTS NOMBRADOS ---
-                    # Esto fuerza a Python a matchear los parámetros sin importar el orden físico en conexiones.py
-                    link_drive = subir_archivo(
-                        bytes_data=bytes_crudos,
-                        carpeta_id=ID_DRIVE_RAIZ
-                    )
+                    # --- CONEXIÓN REAL CON TRES ARGUMENTOS ---
+                    # Pasamos los bytes, el nombre original del archivo y el ID de la carpeta raíz
+                    link_drive = subir_archivo(bytes_crudos, archivo.name, ID_DRIVE_RAIZ)
                     
                     if not link_drive or link_drive == "N/A":
                         raise ValueError("Google Drive no retornó un enlace de acceso válido.")
@@ -109,11 +106,8 @@ with col_manual:
                 try:
                     bytes_crudos_m = archivo_m.read()
                     
-                    # --- MANUAL CON NOMBRADOS TAMBIÉN ---
-                    link_drive_m = subir_archivo(
-                        bytes_data=bytes_crudos_m,
-                        carpeta_id=ID_DRIVE_RAIZ
-                    )
+                    # --- SUBIDA MANUAL CORREGIDA CON NOMBRE ---
+                    link_drive_m = subir_archivo(bytes_crudos_m, archivo_m.name, ID_DRIVE_RAIZ)
                     
                     if not link_drive_m or link_drive_m == "N/A":
                         raise ValueError("No se pudo obtener enlace de Drive en la carga manual.")
@@ -139,3 +133,4 @@ with col_manual:
                     st.error(f"Error en carga manual: {e}")
             else:
                 st.error("Debes adjuntar el archivo para poder enviarlo a control.")
+                
