@@ -39,26 +39,57 @@ def asegurar_pdf(archivo):
     return archivo.getvalue()
 
 def procesar_documento_vehicular_multiple(pdf_bytes):
-    # ... (resto del código igual) ...
-    doc = types.Part.from_bytes(data=pdf_bytes, mime_type="application/pdf")
+    """
+    Procesa un documento (que puede contener múltiples unidades o registros)
+    y devuelve una LISTA estructurada de JSONs.
+    """
+    # DEFINICIÓN DEL PROMPT (Había quedado afuera)
+    prompt = """
+    Analiza este documento vehicular argentino. Puede contener uno o MUCHOS registros agrupados (por ejemplo: múltiples títulos digitales en un solo PDF o una póliza de flota con 70 patentes).
     
-    # CAMBIO AQUÍ: Usamos el modelo estable actual de Google Cloud
-    resp = ia_client.models.generate_content(
-        model='gemini-3.5-flash',  # <--- Este es el modelo oficial
-        contents=[doc, prompt],
-        config=types.GenerateContentConfig(response_mime_type="application/json")
-    )
+    1. Identifica qué tipo de documento base es: "TITULO", "VTV", "SEGURO", "RUTA" o "DESCONOCIDO".
+    2. Recorre TODO el documento y extrae la información unidad por unidad (patente por patente).
+    3. Si es TITULO: extrae marca, modelo, año, chasis y motor para cada patente.
+    4. Si es VTV, SEGURO o RUTA: extrae la FECHA DE VENCIMIENTO correspondiente a esa patente específica (formato DD/MM/YYYY).
+    
+    Devuelve estrictamente un arreglo JSON (LISTA), donde cada objeto tenga esta estructura:
+    [
+        {
+            "tipo_documento": "TITULO", 
+            "patente": "AB123CD",
+            "marca": "CORVEN", 
+            "modelo": "TRIAX", 
+            "anio": "2022", 
+            "chasis": "8CV...", 
+            "motor": "162...", 
+            "fecha_vencimiento": ""
+        }
+    ]
+    Si el documento tiene múltiples páginas o unidades, la lista debe contener tantos elementos como patentes/unidades distintas encuentres.
+    """
     
     try:
+        doc = types.Part.from_bytes(data=pdf_bytes, mime_type="application/pdf")
+        
+        # Llamada con el modelo correcto y las variables definidas
+        resp = ia_client.models.generate_content(
+            model='gemini-3.5-flash', 
+            contents=[doc, prompt],
+            config=types.GenerateContentConfig(response_mime_type="application/json")
+        )
+        
         resultado = json.loads(resp.text)
+        
+        # Aseguramos que retorne una lista siempre
         if isinstance(resultado, list):
             return resultado
         else:
             return [resultado]
+            
     except Exception as e:
         st.error(f"Error al decodificar la respuesta de la IA: {e}")
         return []
-
+        
 def calcular_estado_vto(fecha_str):
     if not fecha_str or str(fecha_str).strip() == "": return "⚪ Sin Dato"
     try:
