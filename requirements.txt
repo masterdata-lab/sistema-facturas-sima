@@ -6,3 +6,4 @@ PyPDF2
 pandas
 streamlit-pdf-viewer
 streamlit-drawable-canvas
+pypdf
