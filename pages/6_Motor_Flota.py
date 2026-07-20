@@ -41,15 +41,20 @@ with col_opts_2:
 # 2. IA Blindada CON ENRUTADOR DE EMERGENCIA (FAILOVER)
 def procesar_documento_flota_ia(pdf_bytes, tipo_sugerido, status_text_ui, contexto_ui):
     plantilla_prompt = """
-    Actúa como un auditor experto en documentación automotriz de Argentina. Analiza el documento de tipo: TIPO_DOCUMENTO.
+    Actúa como un auditor experto en documentación automotriz de Argentina. Analiza el documento proporcionado.
     Extrae los datos solicitados. 
+    
+    REGLA VITAL PARA 'tipo_sugerido': Debes deducir leyendo el documento a qué categoría pertenece. 
+    Responde ÚNICAMENTE con una de estas 5 opciones exactas: TITULO, CEDULA_VERDE, CERTIFICADO_SEGURO, VTV, YPF.
+    
     Para 'tipo_vehiculo', transcribe EXACTAMENTE la categoría o tipo que figura impreso en el documento oficial (ej: SEDAN 4 PUERTAS, PICK-UP, FURGON, CAMION, MOTOVEHICULO, etc.). 
     Para 'anio_inscripcion' busca específicamente el año de inscripción inicial o patentamiento.
+    
     Devuelve estrictamente un objeto JSON estructurado con este formato exacto.
     NO envuelvas la respuesta en bloques de código markdown (```json ... ```). Devuelve solo el texto plano del JSON:
     {
         "patente": "Patente limpia sin espacios ni guiones",
-        "tipo_sugerido": "TIPO_DOCUMENTO",
+        "tipo_sugerido": "TITULO", 
         "titular": "Nombre completo del titular registral",
         "cuit_cuil": "CUIT del titular sin guiones",
         "tipo_vehiculo": "Transcribir tipo textual y literal del documento",
@@ -61,7 +66,10 @@ def procesar_documento_flota_ia(pdf_bytes, tipo_sugerido, status_text_ui, contex
         "nro_motor": "Número de motor completo"
     }
     """
-    prompt = plantilla_prompt.replace("TIPO_DOCUMENTO", str(tipo_sugerido))
+    # IMPORTANTE: También debes borrar esta línea que estaba justo debajo de la plantilla:
+    # prompt = plantilla_prompt.replace("TIPO_DOCUMENTO", str(tipo_sugerido)) 
+    # Y reemplazarla simplemente por:
+    prompt = plantilla_prompt
     doc = types.Part.from_bytes(data=pdf_bytes, mime_type="application/pdf")
     
     # Lista de modelos en orden de prioridad
