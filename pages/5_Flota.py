@@ -7,7 +7,7 @@ from PIL import Image, ImageOps
 from datetime import datetime
 from google.genai import types
 
-# Usamos pypdf para segmentar el archivo localmente (requiere agregar 'pypdf' en requirements.txt)
+# Usamos pypdf para segmentar el archivo localmente
 import pypdf  
 
 from utils.conexiones import (
@@ -86,10 +86,14 @@ st.markdown("## 🚘 DPA | Gestión de Flota y Documentación")
 st.divider()
 
 # --- CARGA DE MAESTROS ---
-try: datos_gerencias = leer_hoja_completa("GERENCIAS")
-except: datos_gerencias = []
+try: 
+    datos_gerencias = leer_hoja_completa("GERENCIAS")
+except: 
+    datos_gerencias = []
+
 lista_gerencias = [str(g[0]).upper() for g in datos_gerencias[1:] if len(g)>0 and str(g[1]).upper()!="INACTIVO"]
-if not lista_gerencias: lista_gerencias = ["DPA"]
+if not lista_gerencias: 
+    lista_gerencias = ["DPA"]
 
 tab_visor, tab_alta, tab_renovacion = st.tabs(["📊 Estado de Flota", "🚀 Alta Inteligente Automatizada", "📅 Carga Masiva de Vencimientos"])
 
@@ -106,7 +110,8 @@ with tab_visor:
             st.dataframe(df[cols_mostrar], use_container_width=True, hide_index=True)
         else:
             st.warning("No hay vehículos cargados.")
-    except: pass
+    except: 
+        pass
 
 with tab_alta:
     st.markdown("### Procesamiento Absoluto de Títulos (Lotes o Multipágina)")
@@ -131,9 +136,8 @@ with tab_alta:
                         escribir_fila("FLOTA", fila)
                         status_panel.write(f"✅ Procesado unitario: **{patente}**")
                 
-   else:
+                else:
                     reader = pypdf.PdfReader(arch)
-                    # CORRECCIÓN AQUÍ: Usamos reader.pages para obtener el total
                     total_paginas = len(reader.pages)
                     status_panel.write(f"📄 El archivo contiene {total_paginas} páginas. Procesando una por una...")
                     
@@ -147,7 +151,8 @@ with tab_alta:
                         page_bytes = page_io.getvalue()
                         
                         datos = procesar_pagina_individual_con_ia(page_bytes)
-                        patente = str(datos.get("patente","")).upper().replace("-","").replace(" ","")                     
+                        patente = str(datos.get("patente","")).upper().replace("-","").replace(" ","")
+                        
                         if patente:
                             link = subir_archivo(f"TITULO_{patente}.pdf", page_bytes, ID_DRIVE_RAIZ, "FLOTA")
                             
@@ -166,7 +171,7 @@ with tab_alta:
                 st.error(f"Error crítico en el archivo {arch.name}: {e}")
                 
         status_panel.update(label="¡Todos los documentos desglosados e indexados con éxito!", state="complete")
-        st.success("La IA terminó el trabajo de campo. Datos impactados en GSheets y Drive.")
+        st.success("La IA terminó el trabajo de campo. Datos impactados en GSheets and Drive.")
         time.sleep(2)
         st.rerun()
 
@@ -181,11 +186,11 @@ with tab_renovacion:
         
         resultados_tabla = []
         
-     try:
+        try:
             reader = pypdf.PdfReader(archivo_masivo)
-            # CORRECCIÓN AQUÍ TAMBIÉN
             total_pag = len(reader.pages)
             status_renov.write(f"Análisis local: Detectadas {total_pag} páginas a auditar.")
+            
             for idx in range(total_pag):
                 status_renov.write(f"Procesando extracto {idx + 1} de {total_pag}...")
                 
