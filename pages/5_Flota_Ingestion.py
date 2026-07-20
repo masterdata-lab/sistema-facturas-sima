@@ -1,5 +1,12 @@
 import streamlit as st
 import time
+# --- INICIALIZACIÓN SEGURA DE VARIABLES DE SESIÓN ---
+if "bandeja_auditoria" not in st.session_state:
+    st.session_state.bandeja_auditoria = []
+if "logs_errores" not in st.session_state:
+    st.session_state.logs_errores = []
+if "abortar_proceso" not in st.session_state:
+    st.session_state.abortar_proceso = False
 # Importamos tus módulos del core
 from core.processor import segmentar_pdf_en_memoria, generar_nombre_legible
 from utils.conexiones import leer_hoja_completa  # Usando tu conector existente
