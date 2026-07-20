@@ -35,7 +35,6 @@ st.divider()
 with st.spinner("Buscando documentos de flota pendientes..."):
     datos_cola = leer_hoja_completa(H_PENDIENTES)
 
-# Captura estricta del estado del pipeline de flota
 para_auditar = [f for f in datos_cola[1:] if len(f) >= 7 and f[6] == "PARA_AUDITAR_FLOTA"]
 
 if not para_auditar:
@@ -54,10 +53,13 @@ else:
     
     id_carga, fecha_ingreso, nombre_archivo, operador, link_drive, _, estado_actual, _, json_crudo = fila_actual[0:9]
     
+    # 🔍 DESESTRUCTURACIÓN Y PARSEO DEL JSON CON EDICIÓN DE CAÍDAS
     datos_flota_json = {}
     if json_crudo:
-        try: datos_flota_json = json.loads(json_crudo)
-        except: pass
+        try: 
+            datos_flota_json = json.loads(json_crudo)
+        except: 
+            st.error("⚠️ El formato del payload JSON guardado es inválido.")
 
     st.divider()
     col_pdf, col_datos = st.columns([1, 1], gap="medium")
@@ -75,52 +77,81 @@ else:
     with col_datos:
         st.markdown("### ✍️ Validación Humana de Datos")
         
+        # Recuperación segura con defaults robustos para los inputs
         patente_sugerida = str(datos_flota_json.get("patente", "N/A")).upper().strip()
         tipo_sugerido = str(datos_flota_json.get("tipo_sugerido", "CEDULA_VERDE")).upper().strip()
         
         with st.form("form_auditoria_flota", clear_on_submit=True):
-            patente_validada = st.text_input("Patente Definitiva (Obligatorio)", value="" if patente_sugerida == "N/A" else patente_sugerida).upper().strip()
+            st.markdown("#### 🚗 Identificación Básica")
+            c1, c2 = st.columns(2)
+            with c1:
+                patente_validada = st.text_input("Patente Definitiva (Obligatorio)", value="" if patente_sugerida == "N/A" else patente_sugerida).upper().strip()
+            with c2:
+                tipo_documento = st.selectbox(
+                    "Tipo Documento Confirmado", 
+                    ["TITULO", "CEDULA_VERDE", "CERTIFICADO_SEGURO", "VTV", "YPF"],
+                    index=["TITULO", "CEDULA_VERDE", "CERTIFICADO_SEGURO", "VTV", "YPF"].index(tipo_sugerido) if tipo_sugerido in ["TITULO", "CEDULA_VERDE", "CERTIFICADO_SEGURO", "VTV", "YPF"] else 1
+                )
             
-            tipo_documento = st.selectbox(
-                "Tipo Documento Confirmado", 
-                ["TITULO", "CEDULA_VERDE", "CERTIFICADO_SEGURO", "VTV", "YPF"],
-                index=["TITULO", "CEDULA_VERDE", "CERTIFICADO_SEGURO", "VTV", "YPF"].index(tipo_sugerido) if tipo_sugerido in ["TITULO", "CEDULA_VERDE", "CERTIFICADO_SEGURO", "VTV", "YPF"] else 1
-            )
-            
-            titular = st.text_input("Titular Registral", value=datos_flota_json.get("titular", ""))
-            cuit_cuil = st.text_input("CUIT / CUIL", value=datos_flota_json.get("cuit_cuil", ""))
-            
+            st.markdown("#### 📜 Datos del Título / Propiedad Vehicular")
+            c3, c4 = st.columns(2)
+            with c3:
+                titular = st.text_input("Titular Registral", value=datos_flota_json.get("titular", ""))
+                cuit_cuil = st.text_input("CUIT / CUIL Titular", value=datos_flota_json.get("cuit_cuil", ""))
+            with c4:
+                marca_modelo = st.text_input("Marca / Modelo", value=datos_flota_json.get("marca_modelo", ""))
+                anio_modelo = st.text_input("Año / Modelo (Año Fabricación)", value=datos_flota_json.get("anio", ""))
+
+            c5, c6 = st.columns(2)
+            with c5:
+                nro_chasis = st.text_input("Número de Chasis / Cuadro", value=datos_flota_json.get("nro_chasis", ""))
+            with c6:
+                nro_motor = st.text_input("Número de Motor", value=datos_flota_json.get("nro_motor", ""))
+                
             st.write("---")
             c_btn1, c_btn2 = st.columns(2)
             with c_btn1:
-                btn_aprobar = st.form_submit_button("✅ Aprobar e Inyectar", use_container_width=True)
+                btn_aprobar = st.form_submit_button("✅ Aprobar e Inyectar en Flota", use_container_width=True)
             with c_btn2:
-                btn_descartar = st.form_submit_button("🗑️ Descartar", use_container_width=True)
+                btn_descartar = st.form_submit_button("🗑️ Descartar Registro", use_container_width=True)
                 
             if btn_aprobar:
                 if not patente_validada:
-                    st.error("❌ La patente es un dato obligatorio.")
+                    st.error("❌ La patente es un dato obligatorio para estructurar la flota.")
                 else:
                     with st.spinner("Ejecutando inyección indexada..."):
                         
-                        # 🌟 LÓGICA DE DERIVACIÓN RELACIONAL CONDICIONAL
+                        # Inyección relacional según el tipo de documento final
                         if tipo_documento == "TITULO":
+                            # Inyectamos en FLOTA con todas las celdas necesarias para el Título
                             escribir_fila("FLOTA", [
-                                patente_validada, "ALTA_POR_TITULO", titular, cuit_cuil, 
-                                link_drive, datetime.now().strftime("%d/%m/%Y")
+                                patente_validada, 
+                                "ALTA_POR_TITULO", 
+                                titular, 
+                                cuit_cuil, 
+                                marca_modelo, 
+                                anio_modelo, 
+                                nro_chasis, 
+                                nro_motor, 
+                                link_drive, 
+                                datetime.now().strftime("%d/%m/%Y")
                             ])
-                            destino = "inyectado en Base Maestra FLOTA"
+                            destino = "inyectado en Base Maestra FLOTA con ficha técnica completa"
                         
                         elif tipo_documento == "CERTIFICADO_SEGURO":
                             escribir_fila("HISTORIAL_SEGUROS", [
-                                patente_validada, datetime.now().strftime("%d/%m/%Y"), 
-                                link_drive, titular
+                                patente_validada, 
+                                datetime.now().strftime("%d/%m/%Y"), 
+                                link_drive, 
+                                titular
                             ])
                             destino = "registrado en HISTORIAL_SEGUROS"
                         
                         else:
                             escribir_fila("HISTORIAL_GENERAL_FLOTA", [
-                                patente_validada, tipo_documento, link_drive, 
+                                patente_validada, 
+                                tipo_documento, 
+                                link_drive, 
                                 datetime.now().strftime("%d/%m/%Y")
                             ])
                             destino = "archivado en Historial General de Flota"
