@@ -1,119 +1,163 @@
 import streamlit as st
-import re
-import json
 import time
-from datetime import datetime
+import json
+import re
 from google.genai import types
-from utils.conexiones import (obtener_cliente_gemini, leer_hoja_completa, descargar_archivo, actualizar_estado_carga)
 
-st.set_page_config(page_title="SIMA ERP | Motor IA Flota", page_icon="⚙️", layout="wide", initial_sidebar_state="collapsed")
+# 🔌 Importamos las conexiones de tu ecosistema real (Mismo que facturas)
+from utils.conexiones import (
+    obtener_cliente_gemini, 
+    leer_hoja_completa, 
+    descargar_archivo, 
+    actualizar_estado_carga
+)
 
-try: H_PENDIENTES = st.secrets["HOJA_PENDIENTES"]
-except: H_PENDIENTES = "PENDIENTES"
+st.set_page_config(page_title="Motor de Extracción - Flota", page_icon="🧠", layout="wide")
 
-ia_client = obtener_cliente_gemini()
+st.title("🧠 Motor de Extracción Cognitiva Real (Flota)")
+st.markdown("---")
+
+# 1. Conexión Real
+try:
+    # Busca el nombre de la hoja en secrets, o por defecto usa "FLOTA_PENDIENTES"
+    # IMPORTANTE: Si tu pestaña del GSheet se llama distinto, cambialo acá abajo
+    HOJA_FLOTA = st.secrets.get("HOJA_FLOTA", "FLOTA_PENDIENTES") 
+    ia_client = obtener_cliente_gemini()
+except Exception as e:
+    st.error(f"Error al inicializar las conexiones: {e}")
+    st.stop()
 
 def extraer_id_drive(url_drive):
     if not url_drive or url_drive == "N/A": return None
-    match = re.search(r'(?:/d/|id=)([a-zA-Z0-9_-]+)', url_drive)
+    match = re.search(r'(?:/d/|id=)([a-zA-Z0-9_-]+)', str(url_drive))
     return match.group(1) if match else None
 
-def procesar_documento_flota_ia(pdf_bytes, tipo_sugerido, modelo_elegido='gemini-2.5-flash', max_reintentos=3):
-    prompt = f"""
-    Actúa como un auditor experto en documentación automotriz de flota.
-    Analiza este documento que ha sido sugerido como tipo: {tipo_sugerido}.
-    
-    Debes extraer de forma extremadamente precisa la información requerida.
-    Si encuentras un Título de Propiedad Automotor o Cédula Verde/Azul, lee con atención el dominio (patente), los datos del titular, y las especificaciones técnicas del cuadro o motor.
-    
-    Devuelve estrictamente un objeto JSON con el siguiente formato:
-    {{
-        "patente": "Escribe la patente/dominio aquí limpia sin espacios",
-        "tipo_sugerido": "{tipo_sugerido}",
-        "titular": "Nombre completo del dueño o empresa titular",
-        "cuit_cuil": "CUIT o CUIL del titular sin guiones",
-        "marca_modelo": "Marca y Modelo exacto del vehículo",
-        "anio": "Año de fabricación o año modelo",
-        "nro_chasis": "Número de chasis o cuadro largo alfanumérico",
+col_opts_1, col_opts_2 = st.columns(2)
+with col_opts_1:
+    modelo_ia = st.selectbox("🧠 Seleccionar Cerebro IA", ["gemini-3.5-flash"])
+with col_opts_2:
+    reprocesar_errores = st.checkbox("🔄 Intentar reprocesar registros con error", value=True)
+    loop_activo = st.checkbox("🔄 Modo Loop Automático (Procesar cada 60 seg)", value=False)
+
+# 2. IA Blindada 
+def procesar_documento_flota_ia(pdf_bytes, tipo_sugerido, modelo_ia):
+    plantilla_prompt = """
+    Actúa como un auditor experto en documentación automotriz. Analiza el documento de tipo: TIPO_DOCUMENTO.
+    Devuelve estrictamente un objeto JSON estructurado con este formato exacto.
+    NO envuelvas la respuesta en bloques de código markdown (```json ... ```). Devuelve solo el texto plano del JSON:
+    {
+        "patente": "Patente limpia sin espacios ni guiones",
+        "tipo_sugerido": "TIPO_DOCUMENTO",
+        "titular": "Nombre completo del titular registral",
+        "cuit_cuil": "CUIT del titular sin guiones",
+        "marca_modelo": "Marca y modelo del vehículo",
+        "anio": "Año de fabricación",
+        "nro_chasis": "Número de chasis largo",
         "nro_motor": "Número de motor completo"
-    }}
+    }
     """
+    prompt = plantilla_prompt.replace("TIPO_DOCUMENTO", str(tipo_sugerido))
+    
     doc = types.Part.from_bytes(data=pdf_bytes, mime_type="application/pdf")
+    resp = ia_client.models.generate_content(
+        model=modelo_ia, 
+        contents=[doc, prompt], 
+        config=types.GenerateContentConfig(response_mime_type="application/json")
+    )
     
-    for intento in range(max_reintentos):
+    texto_limpio = resp.text.strip()
+    if texto_limpio.startswith("```"):
+        texto_limpio = texto_limpio.split("\n", 1)[1]
+    texto_limpio = texto_limpio.rstrip("`").strip()
+    
+    return json.loads(texto_limpio)
+
+# --- 🎯 MAPEO DE COLUMNAS 🎯 ---
+# Acá definimos en qué posición (empezando desde el 0) están los datos en tu Google Sheet
+# Ajustá los números si el orden de tus columnas en Flota es diferente al de Facturas
+COL_ID = 0         # Columna A
+COL_ARCHIVO = 2    # Columna C (Nombre del archivo)
+COL_TIPO = 3       # Columna D (Tipo de documento)
+COL_LINK = 4       # Columna E (Link de Google Drive)
+COL_ESTADO = 6     # Columna G (Donde dice PENDIENTE o PROCESADO)
+
+btn_iniciar = st.button("▶️ Iniciar Procesamiento Manual", type="primary", disabled=loop_activo)
+
+if btn_iniciar or loop_activo:
+    with st.spinner(f"Buscando documentos en hoja '{HOJA_FLOTA}'..."):
         try:
-            resp = ia_client.models.generate_content(
-                model=modelo_elegido, 
-                contents=[doc, prompt], 
-                config=types.GenerateContentConfig(response_mime_type="application/json")
-            )
-            return json.loads(resp.text)
+            datos_cola = leer_hoja_completa(HOJA_FLOTA)
         except Exception as e:
-            if "503" in str(e) or "429" in str(e):
-                time.sleep(10)
-                continue
-            raise e
-
-st.markdown("## ⚙️ Motor de Procesamiento Cognitivo (IA Flota)")
-st.divider()
-
-loop_activo = st.checkbox("🔄 **Modo Escaneo Continuo Automático**", value=False)
-iniciar_manual = False if loop_activo else st.button("▶️ Iniciar Extracción Cognitiva Manual", type="primary")
-
-if loop_activo or iniciar_manual:
-    with st.spinner("Buscando archivos en cola de flota..."):
-        datos_cola = leer_hoja_completa(H_PENDIENTES)
-        
-    pendientes = [f for f in datos_cola[1:] if len(f) >= 7 and f[6] == "PENDIENTE_FLOTA"]
+            st.error(f"No se pudo leer la hoja. Asegurate de que '{HOJA_FLOTA}' existe. Error: {e}")
+            st.stop()
     
+    # Armamos la lista de pendientes (salteando la fila 0 que son los títulos)
+    pendientes = []
+    for fila in datos_cola[1:]:
+        if len(fila) > COL_ESTADO:
+            estado_actual = str(fila[COL_ESTADO]).strip().upper()
+            if estado_actual == "PENDIENTE" or (reprocesar_errores and "ERROR_IA" in estado_actual):
+                pendientes.append(fila)
+
     if not pendientes:
-        st.info("✅ No hay documentos de flota pendientes en la cola del Motor IA.")
+        st.info("✅ No se encontraron documentos 'PENDIENTE' para la flota.")
     else:
-        st.success(f"Encontrados {len(pendientes)} documentos para lectura cognitiva. Procesando...")
+        st.success(f"🚀 Encontrados {len(pendientes)} documentos. Procesando con Drive y Gemini...")
         barra_general = st.progress(0)
         status_text = st.empty()
-        exitosos, fallidos = 0, 0
+        exitos = 0
+        fallas = 0
         
         for i, fila in enumerate(pendientes):
-            id_carga, nombre_archivo, link_drive = fila[0], fila[2], fila[4]
-            tipo_sugerido = fila[7] if len(fila) > 7 else "CEDULA_VERDE"
+            id_carga = fila[COL_ID]
+            nombre_archivo = fila[COL_ARCHIVO] if len(fila) > COL_ARCHIVO else f"Fila_{i+1}"
+            link_drive = fila[COL_LINK] if len(fila) > COL_LINK else ""
+            tipo_doc = fila[COL_TIPO] if len(fila) > COL_TIPO else "Título Digital"
             
-            status_text.markdown(f"⏳ **Leyendo archivo {i+1}/{len(pendientes)}:** {nombre_archivo}")
+            status_text.markdown(f"⏳ **{i+1}/{len(pendientes)}:** {nombre_archivo}")
             
             try:
+                # 1. Extraer ID y Descargar el PDF Real
                 id_drive = extraer_id_drive(link_drive)
-                file_bytes = descargar_archivo(id_drive)
+                if not id_drive:
+                    raise Exception("El link de Drive está vacío o es inválido.")
+                    
+                pdf_bytes = descargar_archivo(id_drive)
+                if not pdf_bytes:
+                    raise Exception("No se pudo descargar el archivo desde Google Drive.")
+                    
+                # 2. Mandar a la IA
+                resultado_json = procesar_documento_flota_ia(pdf_bytes, tipo_doc, modelo_ia)
                 
-                if not file_bytes:
-                    raise Exception("No se pudo descargar el archivo segmentado desde Drive.")
+                # 3. Guardar "PROCESADO" y el resultado JSON en la planilla
+                json_str = json.dumps(resultado_json, ensure_ascii=False)
+                actualizar_estado_carga(HOJA_FLOTA, id_carga, "PROCESADO", json_str)
                 
-                # Invocación a Gemini
-                datos_extraidos = procesar_documento_flota_ia(file_bytes, tipo_sugerido)
-                
-                # Movemos a la bandeja de auditoría con los campos llenos
-                actualizar_estado_carga(H_PENDIENTES, id_carga, "PARA_AUDITAR_FLOTA", json.dumps(datos_extraidos, ensure_ascii=False))
-                exitosos += 1
-                
-                # Freno inteligente corto para cuidar cuotas de API
-                time.sleep(2)
-                
+                exitos += 1
             except Exception as e:
-                actualizar_estado_carga(H_PENDIENTES, id_carga, f"ERROR_IA_FLOTA: {str(e)[:100]}")
-                fallidos += 1
+                # Si algo falla, deja marcado el error
+                error_msg = str(e)[:100]
+                actualizar_estado_carga(HOJA_FLOTA, id_carga, f"ERROR_IA_FLOTA: {error_msg}")
+                fallas += 1
                 
             barra_general.progress((i + 1) / len(pendientes))
+            time.sleep(2) # Para no ahogar la API
             
         status_text.empty()
-        st.markdown("### 📊 Reporte de Extracción:")
-        c1, c2 = st.columns(2)
-        c1.metric("✅ Lecturas Exitosas", exitosos)
-        c2.metric("⚠️ Fallas", fallidos)
-        if fallidos == 0: st.balloons()
+        st.subheader("📊 Resumen del Proceso:")
+        col_r1, col_r2 = st.columns(2)
+        col_r1.metric("✅ Procesados con Éxito", exitos)
+        col_r2.metric("⚠️ Fallas Registradas", fallas)
+        if fallas == 0: 
+            st.balloons()
 
+    # Modo Loop de 60 segundos
     if loop_activo:
         st.write("---")
         reloj = st.empty()
-        for count in range(30, 0, -1):
-            reloj.info(f"⏱️ Siguiente barrido cognitivo en: **{count} segundos**...")
+        for i in range(60, 0, -1):
+            reloj.info(f"⏱️ Próximo escaneo automático en: **{i} segundos**... No cierres esta pestaña.")
             time.sleep(1)
         st.rerun()
+
+st.markdown('<div style="text-align: right; font-size: 12px; color: gray; margin-top: 50px;">Motor Flota | Sistema SIMA</div>', unsafe_allow_html=True)
