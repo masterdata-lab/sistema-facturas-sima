@@ -17,7 +17,7 @@ except ImportError:
 st.set_page_config(page_title="DPA | Ingestión Flota", page_icon="📥", layout="wide")
 
 st.title("📥 Gestión de Flota: Ingestión de Documentos")
-st.markdown("Portal de carga optimizado para flota. Los PDFs multipágina se segmentan automáticamente.")
+st.markdown("Portal de carga optimizado para flota. Base de datos aislada.")
 st.divider()
 
 if "logs_errores" not in st.session_state: 
@@ -54,7 +54,6 @@ with col_ia:
                     archivo_bytes = archivo.getvalue()
                     nombre_original = archivo.name
                     
-                    # ✂️ SEGMENTACIÓN MULTIPÁGINA EN MEMORIA
                     if nombre_original.lower().endswith('.pdf') and pypdf is not None:
                         status_placeholder.info(f"🔍 Analizando páginas de: {nombre_original}")
                         pdf_reader = pypdf.PdfReader(io.BytesIO(archivo_bytes))
@@ -62,7 +61,6 @@ with col_ia:
                         
                         if total_paginas > 1:
                             status_placeholder.warning(f"✂️ Separando {total_paginas} páginas independientes...")
-                            
                             for p_idx in range(total_paginas):
                                 pdf_writer = pypdf.PdfWriter()
                                 pdf_writer.add_page(pdf_reader.pages[p_idx])
@@ -73,7 +71,6 @@ with col_ia:
                                 
                                 id_carga = f"FLOTA_{uuid.uuid4().hex[:8].upper()}"
                                 fecha_ahora = datetime.now().strftime("%d/%m/%Y %H:%M:%S")
-                                
                                 nombre_pagina = f"PAG_{p_idx+1}_DE_{total_paginas}_{nombre_original}"
                                 nombre_destino_drive = f"PENDIENTE_{id_carga}_{nombre_pagina}"
                                 
@@ -82,15 +79,14 @@ with col_ia:
                                 nombre_minuscula = nombre_original.lower()
                                 tipo_sugerido = "TITULO" if "titulo" in nombre_minuscula else "CEDULA_VERDE"
                                 
-                                # Entra como PENDIENTE_FLOTA para que lo capture la IA
-                                escribir_fila("PENDIENTES", [
+                                # 🌟 CAMBIO: Tabla dedicada PENDIENTES_FLOTA
+                                escribir_fila("PENDIENTES_FLOTA", [
                                     id_carga, fecha_ahora, nombre_pagina, "OPERADOR_FLOTA", 
                                     link_drive, "N/A", "PENDIENTE_FLOTA", 
                                     tipo_sugerido, ""
                                 ])
                             continue
                     
-                    # CARGA ESTÁNDAR (Individual / Imágenes)
                     status_placeholder.info(f"⏳ Subiendo a Drive: {nombre_original}")
                     id_carga = f"FLOTA_{uuid.uuid4().hex[:8].upper()}"
                     fecha_ahora = datetime.now().strftime("%d/%m/%Y %H:%M:%S")
@@ -104,7 +100,7 @@ with col_ia:
                     elif "vtv" in nombre_minuscula: tipo_sugerido = "VTV"
                     else: tipo_sugerido = "CEDULA_VERDE"
                         
-                    escribir_fila("PENDIENTES", [
+                    escribir_fila("PENDIENTES_FLOTA", [
                         id_carga, fecha_ahora, nombre_original, "OPERADOR_FLOTA", 
                         link_drive, "N/A", "PENDIENTE_FLOTA", 
                         tipo_sugerido, ""
@@ -113,12 +109,12 @@ with col_ia:
                 except Exception as e:
                     st.session_state.logs_errores.append(f"❌ Error en {archivo.name}: {str(e)}")
             
-            status_placeholder.success("🎉 Lote enviado a la cola de procesamiento del Motor IA.")
+            status_placeholder.success("🎉 Lote enviado a PENDIENTES_FLOTA.")
             time.sleep(1.2)
             st.rerun()
 
 with col_manual:
-    st.subheader("✍️ Carga Manual Directa (Saltea IA)")
+    st.subheader("✍️ Carga Manual")
     with st.form("form_alta_directa", clear_on_submit=True):
         patente_m = st.text_input("Patente (Provisoria)").upper().strip()
         tipo_m = st.selectbox("Tipo Documento", ["TITULO", "CEDULA_VERDE", "CERTIFICADO_SEGURO", "VTV", "YPF"])
@@ -131,15 +127,14 @@ with col_manual:
                     fecha_ahora_m = datetime.now().strftime("%d/%m/%Y %H:%M:%S")
                     link_drive_m = subir_archivo(f"MANUAL_{id_carga_m}_{archivo_m.name}", archivo_m.getvalue(), ID_DRIVE_RAIZ)
                     
-                    # La carga manual SI va directo a la auditoría porque no requiere IA
                     datos_m = {"patente": patente_m if patente_m else "N/A", "tipo_sugerido": tipo_m, "titular": "", "cuit_cuil": "", "marca_modelo": "", "anio": "", "nro_chasis": "", "nro_motor": ""}
                     
-                    escribir_fila("PENDIENTES", [
+                    escribir_fila("PENDIENTES_FLOTA", [
                         id_carga_m, fecha_ahora_m, archivo_m.name, "MANUAL", 
                         link_drive_m, "N/A", "PARA_AUDITAR_FLOTA", 
                         "Carga manual.", json.dumps(datos_m, ensure_ascii=False)
                     ])
-                    st.success("Enviado a revisión humana.")
+                    st.success("Enviado a revisión.")
                     time.sleep(0.8)
                     st.rerun()
                 except Exception as e:
