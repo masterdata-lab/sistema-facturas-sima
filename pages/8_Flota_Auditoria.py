@@ -1,11 +1,20 @@
 import streamlit as st
 import json
 import re
+import time  # <-- Agregado para los frenos de redirección
 from datetime import datetime
-from utils.conexiones import (leer_hoja_completa, actualizar_estado_carga, escribir_fila, H_PENDIENTES)
+
+# --- IMPORTACIÓN CORREGIDA SIN H_PENDIENTES ---
+from utils.conexiones import (leer_hoja_completa, actualizar_estado_carga, escribir_fila)
+
+# --- INICIALIZACIÓN DE LA VARIABLE IGUAL QUE EN FACTURACIÓN ---
+try: 
+    H_PENDIENTES = st.secrets["HOJA_PENDIENTES"]
+except: 
+    H_PENDIENTES = "PENDIENTES"
 
 st.set_page_config(page_title="DPA | Auditoría de Flota", page_icon="⚖️", layout="wide", initial_sidebar_state="collapsed")
-
+# ... (El resto del código del layout y el formulario sigue exactamente igual abajo)
 # Estilos idénticos al ecosistema SIMA
 st.markdown('''
 <style>
