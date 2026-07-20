@@ -36,8 +36,8 @@ with col_opts_2:
 def obtener_pendientes_flota(incluir_errores):
     if "mock_pendientes" not in st.session_state:
         st.session_state.mock_pendientes = [
-            {"id": 1, "archivo": "PAG_1_DE_5_TITULO A162ABP.pdf", "tipo": "Título Digital", "estado": "ERROR_IA_FLOTA: 503"},
-            {"id": 2, "archivo": "PAG_2_DE_5_TITULO A162ABP.pdf", "tipo": "Título Digital", "estado": "ERROR_IA_FLOTA: 503"}
+            {"id": 1, "archivo": "PAG_1_DE_5_TITULO A162ABP.pdf", "tipo": "Título Digital", "estado": "ERROR_IA_FLOTA: Extra data"},
+            {"id": 2, "archivo": "PAG_2_DE_5_TITULO A162ABP.pdf", "tipo": "Título Digital", "estado": "ERROR_IA_FLOTA: Extra data"}
         ]
     return [f for f in st.session_state.mock_pendientes if f["estado"] == "PENDIENTE" or (incluir_errores and "ERROR" in f["estado"])]
 
@@ -47,10 +47,10 @@ def actualizar_estado_flota(id_registro, estado_nuevo):
             f["estado"] = estado_nuevo
 
 def procesar_documento_flota_ia(pdf_bytes, tipo_sugerido, modelo_ia):
-    # Usamos llaves simples y reemplazamos los placeholders para que GitHub no se confunda de color
     plantilla_prompt = """
     Actúa como un auditor experto en documentación automotriz. Analiza el documento de tipo: TIPO_DOCUMENTO.
-    Devuelve estrictamente un objeto JSON estructurado con este formato exacto:
+    Devuelve estrictamente un objeto JSON estructurado con este formato exacto. 
+    NO envuelvas la respuesta en bloques de código markdown (```json ... ```). Devuelve solo el texto plano del JSON:
     {
         "patente": "Patente limpia sin espacios ni guiones",
         "tipo_sugerido": "TIPO_DOCUMENTO",
@@ -63,6 +63,17 @@ def procesar_documento_flota_ia(pdf_bytes, tipo_sugerido, modelo_ia):
     }
     """
     prompt = plantilla_prompt.replace("TIPO_DOCUMENTO", tipo_sugerido)
+    
+    # En producción descomentar las líneas de abajo para conectar con el PDF real
+    # doc = types.Part.from_bytes(data=pdf_bytes, mime_type="application/pdf")
+    # resp = ia_client.models.generate_content(
+    #     model=modelo_ia, 
+    #     contents=[doc, prompt], 
+    #     config=types.GenerateContentConfig(response_mime_type="application/json")
+    # )
+    # texto_limpio = resp.text.strip().replace("```json", "").replace("```", "")
+    # return json.loads(texto_limpio)
+    
     time.sleep(2) 
     return {"patente": "A162ABP", "tipo_sugerido": tipo_sugerido, "titular": "JUAN PEREZ"}
 
