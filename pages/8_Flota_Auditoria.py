@@ -1,160 +1,137 @@
 import streamlit as st
-import time
-import uuid
 import json
-import io
+import re
+import time
 from datetime import datetime
-from utils.conexiones import escribir_fila, subir_archivo, ID_DRIVE_RAIZ
+from utils.conexiones import leer_hoja_completa, actualizar_estado_carga, escribir_fila
 
-# Buscamos la librería de manipulación de PDFs integrada en el entorno
-try:
-    import pypdf
-except ImportError:
-    try:
-        import PyPDF2 as pypdf
-    except ImportError:
-        pypdf = None
+try: 
+    H_PENDIENTES = st.secrets["HOJA_PENDIENTES"]
+except: 
+    H_PENDIENTES = "PENDIENTES"
 
-st.set_page_config(page_title="DPA | Ingestión Flota", page_icon="📥", layout="wide")
+st.set_page_config(page_title="DPA | Auditoría de Flota", page_icon="⚖️", layout="wide", initial_sidebar_state="collapsed")
 
-st.title("📥 Gestión de Flota: Ingestión de Documentos")
-st.markdown("Portal de carga optimizado para flota. Los PDFs multipágina se segmentan automáticamente.")
+st.markdown('''
+<style>
+    .block-container { padding-top: 1rem; padding-bottom: 1rem; }
+    [data-testid="collapsedControl"] { border: 2px solid #ff4b4b; border-radius: 50%; box-shadow: 0px 0px 5px rgba(255,75,75,0.8); }
+    .stAlert { padding: 0.5rem; }
+    ::-webkit-scrollbar { width: 10px !important; height: 10px !important; background-color: #f1f1f1 !important; }
+    ::-webkit-scrollbar-thumb { background-color: #c1c1c1 !important; border-radius: 5px !important; }
+    .firma-flotante { position: fixed; bottom: 8px; right: 15px; font-size: 10.5px; color: rgba(128, 128, 128, 0.6); z-index: 99999; pointer-events: none; font-family: monospace; }
+</style>
+<div class="firma-flotante">Software DPA | Creado por Serrano Cristian</div>
+''', unsafe_allow_html=True)
+
+def extraer_id_drive(url_drive):
+    if not url_drive or url_drive == "N/A": return None
+    match = re.search(r'(?:/d/|id=)([a-zA-Z0-9_-]+)', url_drive)
+    return match.group(1) if match else None
+
+st.markdown("## ⚖️ Módulo de Auditoría Humana: Control de Flota")
 st.divider()
 
-if "logs_errores" not in st.session_state: 
-    st.session_state.logs_errores = []
+with st.spinner("Buscando documentos de flota pendientes..."):
+    datos_cola = leer_hoja_completa(H_PENDIENTES)
 
-if st.session_state.logs_errores:
-    with st.expander("⚠️ Alertas de Procesamiento", expanded=True):
-        for err in st.session_state.logs_errores:
-            st.error(err)
-        if st.button("Limpiar Alertas"):
-            st.session_state.logs_errores = []
-            st.rerun()
+# Captura estricta del estado del pipeline de flota
+para_auditar = [f for f in datos_cola[1:] if len(f) >= 7 and f[6] == "PARA_AUDITAR_FLOTA"]
 
-col_ia, col_manual = st.columns([2, 1], gap="medium")
-
-with col_ia:
-    st.subheader("⚡ Carga Asistida en Lote")
-    archivos_cargados = st.file_uploader(
-        "Arrastrá aquí PDFs multipágina, títulos, pólizas o VTV",
-        type=["pdf", "png", "jpg"], accept_multiple_files=True, key="uploader_flota"
-    )
-    
-    if st.button("Procesar y Enviar a Auditoría", use_container_width=True, type="primary"):
-        if archivos_cargados:
-            status_placeholder = st.empty()
-            progreso_bar = st.progress(0)
-            total = len(archivos_cargados)
-            
-            for idx, archivo in enumerate(archivos_cargados):
-                porcentaje = int((idx + 1) / total * 100)
-                progreso_bar.progress(porcentaje)
-                
-                try:
-                    archivo_bytes = archivo.getvalue()
-                    nombre_original = archivo.name
-                    
-                    # ✂️ SEGMENTACIÓN MULTIPÁGINA EN MEMORIA
-                    if nombre_original.lower().endswith('.pdf') and pypdf is not None:
-                        status_placeholder.info(f"🔍 Analizando páginas de: {nombre_original}")
-                        pdf_reader = pypdf.PdfReader(io.BytesIO(archivo_bytes))
-                        total_paginas = len(pdf_reader.pages)
-                        
-                        if total_paginas > 1:
-                            status_placeholder.warning(f"✂️ Separando {total_paginas} páginas independientes...")
-                            
-                            for p_idx in range(total_paginas):
-                                pdf_writer = pypdf.PdfWriter()
-                                pdf_writer.add_page(pdf_reader.pages[p_idx])
-                                
-                                output_buffer = io.BytesIO()
-                                pdf_writer.write(output_buffer)
-                                bytes_pagina = output_buffer.getvalue()
-                                
-                                id_carga = f"FLOTA_{uuid.uuid4().hex[:8].upper()}"
-                                fecha_ahora = datetime.now().strftime("%d/%m/%Y %H:%M:%S")
-                                
-                                nombre_pagina = f"PAG_{p_idx+1}_DE_{total_paginas}_{nombre_original}"
-                                nombre_destino_drive = f"PENDIENTE_{id_carga}_{nombre_pagina}"
-                                
-                                link_drive = subir_archivo(nombre_destino_drive, bytes_pagina, ID_DRIVE_RAIZ)
-                                
-                                nombre_minuscula = nombre_original.lower()
-                                tipo_sugerido = "TITULO" if "titulo" in nombre_minuscula else "CEDULA_VERDE"
-                                
-                                datos_predichos = {
-                                    "patente": "N/A", 
-                                    "tipo_sugerido": tipo_sugerido, 
-                                    "origen": nombre_pagina,
-                                    "titular": "",
-                                    "cuit_cuil": ""
-                                }
-                                
-                                escribir_fila("PENDIENTES", [
-                                    id_carga, fecha_ahora, nombre_pagina, "OPERADOR_FLOTA", 
-                                    link_drive, "N/A", "PARA_AUDITAR_FLOTA", 
-                                    f"Segmento {p_idx+1}/{total_paginas} extraído.", 
-                                    json.dumps(datos_predichos, ensure_ascii=False)
-                                ])
-                            continue
-                    
-                    # CARGA ESTÁNDAR (Individual / Imágenes)
-                    status_placeholder.info(f"⏳ Subiendo a Drive: {nombre_original}")
-                    id_carga = f"FLOTA_{uuid.uuid4().hex[:8].upper()}"
-                    fecha_ahora = datetime.now().strftime("%d/%m/%Y %H:%M:%S")
-                    nombre_destino_drive = f"PENDIENTE_{id_carga}_{nombre_original}"
-                    
-                    link_drive = subir_archivo(nombre_destino_drive, archivo_bytes, ID_DRIVE_RAIZ)
-                    
-                    nombre_minuscula = nombre_original.lower()
-                    if "titulo" in nombre_minuscula: tipo_sugerido = "TITULO"
-                    elif "seguro" in nombre_minuscula or "poliza" in nombre_minuscula: tipo_sugerido = "CERTIFICADO_SEGURO"
-                    elif "vtv" in nombre_minuscula: tipo_sugerido = "VTV"
-                    else: tipo_sugerido = "CEDULA_VERDE"
-                        
-                    datos_predichos = {
-                        "patente": "N/A", "tipo_sugerido": tipo_sugerido, "origen": nombre_original, "titular": "", "cuit_cuil": ""
-                    }
-                    
-                    escribir_fila("PENDIENTES", [
-                        id_carga, fecha_ahora, nombre_original, "OPERADOR_FLOTA", 
-                        link_drive, "N/A", "PARA_AUDITAR_FLOTA", 
-                        "Listo para auditoría.", 
-                        json.dumps(datos_predichos, ensure_ascii=False)
-                    ])
-                    
-                except Exception as e:
-                    st.session_state.logs_errores.append(f"❌ Error en {archivo.name}: {str(e)}")
-            
-            status_placeholder.success("🎉 Carga y división completada exitosamente.")
-            time.sleep(1.2)
-            st.rerun()
-
-with col_manual:
-    st.subheader("✍️ Carga Manual Directa")
-    with st.form("form_alta_directa", clear_on_submit=True):
-        patente_m = st.text_input("Patente (Provisoria)").upper().strip()
-        tipo_m = st.selectbox("Tipo Documento", ["TITULO", "CEDULA_VERDE", "CERTIFICADO_SEGURO", "VTV", "YPF"])
-        archivo_m = st.file_uploader("Archivo", type=["pdf", "png", "jpg"])
+if not para_auditar:
+    st.success("🎉 No hay documentos de flota pendientes de visado humano.")
+else:
+    opciones = {}
+    for fila in para_auditar:
+        tipo_doc_sugerido = "Documento"
+        if len(fila) >= 9 and fila[8]:
+            try: tipo_doc_sugerido = json.loads(fila[8]).get("tipo_sugerido", "Documento")
+            except: pass
+        opciones[fila[0]] = f"📋 {tipo_doc_sugerido} | 📄 {fila[2]} | 📅 {fila[1]}"
         
-        if st.form_submit_button("📥 Enviar a Control", use_container_width=True):
-            if archivo_m:
-                try:
-                    id_carga_m = f"FLOTA_{uuid.uuid4().hex[:8].upper()}"
-                    fecha_ahora_m = datetime.now().strftime("%d/%m/%Y %H:%M:%S")
-                    
-                    link_drive_m = subir_archivo(f"MANUAL_{id_carga_m}_{archivo_m.name}", archivo_m.getvalue(), ID_DRIVE_RAIZ)
-                    
-                    datos_m = {"patente": patente_m if patente_m else "N/A", "tipo_sugerido": tipo_m, "origen": archivo_m.name}
-                    
-                    escribir_fila("PENDIENTES", [
-                        id_carga_m, fecha_ahora_m, archivo_m.name, "MANUAL", 
-                        link_drive_m, "N/A", "PARA_AUDITAR_FLOTA", 
-                        "Carga manual.", json.dumps(datos_m, ensure_ascii=False)
-                    ])
-                    st.success("Enviado a revisión.")
-                    time.sleep(0.8)
-                    st.rerun()
-                except Exception as e:
-                    st.error(f"Error: {e}")
+    carga_seleccionada = st.selectbox("Seleccionar registro a auditar:", options=list(opciones.keys()), format_func=lambda x: opciones[x])
+    fila_actual = next(f for f in para_auditar if f[0] == carga_seleccionada)
+    
+    id_carga, fecha_ingreso, nombre_archivo, operador, link_drive, _, estado_actual, _, json_crudo = fila_actual[0:9]
+    
+    datos_flota_json = {}
+    if json_crudo:
+        try: datos_flota_json = json.loads(json_crudo)
+        except: pass
+
+    st.divider()
+    col_pdf, col_datos = st.columns([1, 1], gap="medium")
+    
+    with col_pdf:
+        st.markdown("### 📄 Vista Previa del Documento Extraído")
+        id_drive = extraer_id_drive(link_drive)
+        if id_drive:
+            url_preview = f"https://drive.google.com/file/d/{id_drive}/preview"
+            st.markdown(f'<iframe src="{url_preview}" width="100%" height="800px" style="border: none; border-radius: 8px;"></iframe>', unsafe_allow_html=True)
+        else: 
+            st.error("Archivo sin vista previa disponible.")
+            st.markdown(f"[🔗 Enlace Directo a Drive]({link_drive})")
+    
+    with col_datos:
+        st.markdown("### ✍️ Validación Humana de Datos")
+        
+        patente_sugerida = str(datos_flota_json.get("patente", "N/A")).upper().strip()
+        tipo_sugerido = str(datos_flota_json.get("tipo_sugerido", "CEDULA_VERDE")).upper().strip()
+        
+        with st.form("form_auditoria_flota", clear_on_submit=True):
+            patente_validada = st.text_input("Patente Definitiva (Obligatorio)", value="" if patente_sugerida == "N/A" else patente_sugerida).upper().strip()
+            
+            tipo_documento = st.selectbox(
+                "Tipo Documento Confirmado", 
+                ["TITULO", "CEDULA_VERDE", "CERTIFICADO_SEGURO", "VTV", "YPF"],
+                index=["TITULO", "CEDULA_VERDE", "CERTIFICADO_SEGURO", "VTV", "YPF"].index(tipo_sugerido) if tipo_sugerido in ["TITULO", "CEDULA_VERDE", "CERTIFICADO_SEGURO", "VTV", "YPF"] else 1
+            )
+            
+            titular = st.text_input("Titular Registral", value=datos_flota_json.get("titular", ""))
+            cuit_cuil = st.text_input("CUIT / CUIL", value=datos_flota_json.get("cuit_cuil", ""))
+            
+            st.write("---")
+            c_btn1, c_btn2 = st.columns(2)
+            with c_btn1:
+                btn_aprobar = st.form_submit_button("✅ Aprobar e Inyectar", use_container_width=True)
+            with c_btn2:
+                btn_descartar = st.form_submit_button("🗑️ Descartar", use_container_width=True)
+                
+            if btn_aprobar:
+                if not patente_validada:
+                    st.error("❌ La patente es un dato obligatorio.")
+                else:
+                    with st.spinner("Ejecutando inyección indexada..."):
+                        
+                        # 🌟 LÓGICA DE DERIVACIÓN RELACIONAL CONDICIONAL
+                        if tipo_documento == "TITULO":
+                            escribir_fila("FLOTA", [
+                                patente_validada, "ALTA_POR_TITULO", titular, cuit_cuil, 
+                                link_drive, datetime.now().strftime("%d/%m/%Y")
+                            ])
+                            destino = "inyectado en Base Maestra FLOTA"
+                        
+                        elif tipo_documento == "CERTIFICADO_SEGURO":
+                            escribir_fila("HISTORIAL_SEGUROS", [
+                                patente_validada, datetime.now().strftime("%d/%m/%Y"), 
+                                link_drive, titular
+                            ])
+                            destino = "registrado en HISTORIAL_SEGUROS"
+                        
+                        else:
+                            escribir_fila("HISTORIAL_GENERAL_FLOTA", [
+                                patente_validada, tipo_documento, link_drive, 
+                                datetime.now().strftime("%d/%m/%Y")
+                            ])
+                            destino = "archivado en Historial General de Flota"
+                        
+                        actualizar_estado_carga(H_PENDIENTES, id_carga, "APROBADA")
+                        st.success(f"🎉 Registro procesado y {destino}.")
+                        time.sleep(1)
+                        st.rerun()
+            
+            if btn_descartar:
+                actualizar_estado_carga(H_PENDIENTES, id_carga, "DESCARTADO")
+                st.warning("Documento descartado de la cola.")
+                time.sleep(0.8)
+                st.rerun()
