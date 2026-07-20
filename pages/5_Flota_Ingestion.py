@@ -17,12 +17,16 @@ except ImportError:
 st.set_page_config(page_title="DPA | Ingestión Flota", page_icon="📥", layout="wide")
 
 st.title("📥 Gestión de Flota: Ingestión de Documentos")
-st.markdown("Portal de carga optimizado para flota. Base de datos aislada.")
+st.markdown("Portal de carga optimizado para flota con base de datos dedicada.")
 st.divider()
 
+# Inicializar estados para no perder información en pantalla
 if "logs_errores" not in st.session_state: 
     st.session_state.logs_errores = []
+if "resultado_carga" not in st.session_state:
+    st.session_state.resultado_carga = None
 
+# Mostrar errores persistentes si los hay
 if st.session_state.logs_errores:
     with st.expander("⚠️ Alertas de Procesamiento", expanded=True):
         for err in st.session_state.logs_errores:
@@ -30,6 +34,13 @@ if st.session_state.logs_errores:
         if st.button("Limpiar Alertas"):
             st.session_state.logs_errores = []
             st.rerun()
+
+# Mostrar éxito persistente de la carga anterior para que el usuario sepa que terminó
+if st.session_state.resultado_carga:
+    st.success(st.session_state.resultado_carga)
+    if st.button("Cargar más documentos"):
+        st.session_state.resultado_carga = None
+        st.rerun()
 
 col_ia, col_manual = st.columns([2, 1], gap="medium")
 
@@ -42,76 +53,83 @@ with col_ia:
     
     if st.button("🚀 Enviar Lote al Motor IA de Flota", use_container_width=True, type="primary"):
         if archivos_cargados:
-            status_placeholder = st.empty()
-            progreso_bar = st.progress(0)
-            total = len(archivos_cargados)
+            total_archivos = len(archivos_cargados)
+            total_procesados = 0
             
-            for idx, archivo in enumerate(archivos_cargados):
-                porcentaje = int((idx + 1) / total * 100)
-                progreso_bar.progress(porcentaje)
+            # Usamos st.status para que el usuario vea exactamente qué pasa segundo a segundo
+            with st.status("🚀 Procesando lote de archivos...", expanded=True) as status:
+                for idx, archivo in enumerate(archivos_cargados):
+                    status.write(f"📦 Tratando archivo {idx+1}/{total_archivos}: **{archivo.name}**")
+                    
+                    try:
+                        archivo_bytes = archivo.getvalue()
+                        nombre_original = archivo.name
+                        
+                        if nombre_original.lower().endswith('.pdf') and pypdf is not None:
+                            pdf_reader = pypdf.PdfReader(io.BytesIO(archivo_bytes))
+                            total_paginas = len(pdf_reader.pages)
+                            
+                            if total_paginas > 1:
+                                status.write(f"✂️ Documento multipágina detectado. Segmentando {total_paginas} páginas...")
+                                
+                                for p_idx in range(total_paginas):
+                                    pdf_writer = pypdf.PdfWriter()
+                                    pdf_writer.add_page(pdf_reader.pages[p_idx])
+                                    
+                                    output_buffer = io.BytesIO()
+                                    pdf_writer.write(output_buffer)
+                                    bytes_pagina = output_buffer.getvalue()
+                                    
+                                    id_carga = f"FLOTA_{uuid.uuid4().hex[:8].upper()}"
+                                    fecha_ahora = datetime.now().strftime("%d/%m/%Y %H:%M:%S")
+                                    nombre_pagina = f"PAG_{p_idx+1}_DE_{total_paginas}_{nombre_original}"
+                                    nombre_destino_drive = f"PENDIENTE_{id_carga}_{nombre_pagina}"
+                                    
+                                    status.write(f"☁️ Subiendo a Drive página {p_idx+1}...")
+                                    link_drive = subir_archivo(nombre_destino_drive, bytes_pagina, ID_DRIVE_RAIZ)
+                                    
+                                    nombre_minuscula = nombre_original.lower()
+                                    tipo_sugerido = "TITULO" if "titulo" in nombre_minuscula else "CEDULA_VERDE"
+                                    
+                                    escribir_fila("PENDIENTES_FLOTA", [
+                                        id_carga, fecha_ahora, nombre_pagina, "OPERADOR_FLOTA", 
+                                        link_drive, "N/A", "PENDIENTE_FLOTA", 
+                                        tipo_sugerido, ""
+                                    ])
+                                total_procesados += 1
+                                continue
+                        
+                        # Carga de archivos individuales
+                        id_carga = f"FLOTA_{uuid.uuid4().hex[:8].upper()}"
+                        fecha_ahora = datetime.now().strftime("%d/%m/%Y %H:%M:%S")
+                        nombre_destino_drive = f"PENDIENTE_{id_carga}_{nombre_original}"
+                        
+                        status.write("☁️ Subiendo archivo a Drive...")
+                        link_drive = subir_archivo(nombre_destino_drive, archivo_bytes, ID_DRIVE_RAIZ)
+                        
+                        nombre_minuscula = nombre_original.lower()
+                        if "titulo" in nombre_minuscula: tipo_sugerido = "TITULO"
+                        elif "seguro" in nombre_minuscula or "poliza" in nombre_minuscula: tipo_sugerido = "CERTIFICADO_SEGURO"
+                        elif "vtv" in nombre_minuscula: tipo_sugerido = "VTV"
+                        else: tipo_sugerido = "CEDULA_VERDE"
+                            
+                        escribir_fila("PENDIENTES_FLOTA", [
+                            id_carga, fecha_ahora, nombre_original, "OPERADOR_FLOTA", 
+                            link_drive, "N/A", "PENDIENTE_FLOTA", 
+                            tipo_sugerido, ""
+                        ])
+                        total_procesados += 1
+                        
+                    except Exception as e:
+                        st.session_state.logs_errores.append(f"❌ Error al procesar {archivo.name}: {str(e)}")
                 
-                try:
-                    archivo_bytes = archivo.getvalue()
-                    nombre_original = archivo.name
-                    
-                    if nombre_original.lower().endswith('.pdf') and pypdf is not None:
-                        status_placeholder.info(f"🔍 Analizando páginas de: {nombre_original}")
-                        pdf_reader = pypdf.PdfReader(io.BytesIO(archivo_bytes))
-                        total_paginas = len(pdf_reader.pages)
-                        
-                        if total_paginas > 1:
-                            status_placeholder.warning(f"✂️ Separando {total_paginas} páginas independientes...")
-                            for p_idx in range(total_paginas):
-                                pdf_writer = pypdf.PdfWriter()
-                                pdf_writer.add_page(pdf_reader.pages[p_idx])
-                                
-                                output_buffer = io.BytesIO()
-                                pdf_writer.write(output_buffer)
-                                bytes_pagina = output_buffer.getvalue()
-                                
-                                id_carga = f"FLOTA_{uuid.uuid4().hex[:8].upper()}"
-                                fecha_ahora = datetime.now().strftime("%d/%m/%Y %H:%M:%S")
-                                nombre_pagina = f"PAG_{p_idx+1}_DE_{total_paginas}_{nombre_original}"
-                                nombre_destino_drive = f"PENDIENTE_{id_carga}_{nombre_pagina}"
-                                
-                                link_drive = subir_archivo(nombre_destino_drive, bytes_pagina, ID_DRIVE_RAIZ)
-                                
-                                nombre_minuscula = nombre_original.lower()
-                                tipo_sugerido = "TITULO" if "titulo" in nombre_minuscula else "CEDULA_VERDE"
-                                
-                                # 🌟 CAMBIO: Tabla dedicada PENDIENTES_FLOTA
-                                escribir_fila("PENDIENTES_FLOTA", [
-                                    id_carga, fecha_ahora, nombre_pagina, "OPERADOR_FLOTA", 
-                                    link_drive, "N/A", "PENDIENTE_FLOTA", 
-                                    tipo_sugerido, ""
-                                ])
-                            continue
-                    
-                    status_placeholder.info(f"⏳ Subiendo a Drive: {nombre_original}")
-                    id_carga = f"FLOTA_{uuid.uuid4().hex[:8].upper()}"
-                    fecha_ahora = datetime.now().strftime("%d/%m/%Y %H:%M:%S")
-                    nombre_destino_drive = f"PENDIENTE_{id_carga}_{nombre_original}"
-                    
-                    link_drive = subir_archivo(nombre_destino_drive, archivo_bytes, ID_DRIVE_RAIZ)
-                    
-                    nombre_minuscula = nombre_original.lower()
-                    if "titulo" in nombre_minuscula: tipo_sugerido = "TITULO"
-                    elif "seguro" in nombre_minuscula or "poliza" in nombre_minuscula: tipo_sugerido = "CERTIFICADO_SEGURO"
-                    elif "vtv" in nombre_minuscula: tipo_sugerido = "VTV"
-                    else: tipo_sugerido = "CEDULA_VERDE"
-                        
-                    escribir_fila("PENDIENTES_FLOTA", [
-                        id_carga, fecha_ahora, nombre_original, "OPERADOR_FLOTA", 
-                        link_drive, "N/A", "PENDIENTE_FLOTA", 
-                        tipo_sugerido, ""
-                    ])
-                    
-                except Exception as e:
-                    st.session_state.logs_errores.append(f"❌ Error en {archivo.name}: {str(e)}")
+                status.update(label="✅ Proceso de ingesta finalizado", state="complete")
             
-            status_placeholder.success("🎉 Lote enviado a PENDIENTES_FLOTA.")
-            time.sleep(1.2)
+            # Guardamos el resultado de forma fija
+            st.session_state.resultado_carga = f"🎉 ¡Éxito! Se subieron y encolaron {total_procesados} documentos correctamente en PENDIENTES_FLOTA."
             st.rerun()
+        else:
+            st.warning("Por favor, seleccioná al menos un archivo antes de enviar.")
 
 with col_manual:
     st.subheader("✍️ Carga Manual")
@@ -134,8 +152,7 @@ with col_manual:
                         link_drive_m, "N/A", "PARA_AUDITAR_FLOTA", 
                         "Carga manual.", json.dumps(datos_m, ensure_ascii=False)
                     ])
-                    st.success("Enviado a revisión.")
-                    time.sleep(0.8)
+                    st.session_state.resultado_carga = "✅ Documento manual enviado directo a la mesa de auditoría."
                     st.rerun()
                 except Exception as e:
                     st.error(f"Error: {e}")
