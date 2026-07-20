@@ -3,11 +3,12 @@ import pandas as pd
 import json
 import io
 import time
-import re
-import pypdf  # Asegurate de tener pypdf en tu requirements.txt
 from PIL import Image, ImageOps
 from datetime import datetime
 from google.genai import types
+
+# Usamos pypdf para segmentar el archivo localmente (requiere agregar 'pypdf' en requirements.txt)
+import pypdf  
 
 from utils.conexiones import (
     leer_hoja_completa, escribir_fila, subir_archivo, ID_DRIVE_RAIZ, obtener_cliente_gemini
@@ -58,7 +59,6 @@ def procesar_pagina_individual_con_ia(pdf_page_bytes):
     """
     doc = types.Part.from_bytes(data=pdf_page_bytes, mime_type="application/pdf")
     
-    # Reintentos automáticos si Google responde con 503 (Alta demanda)
     for intento in range(3):
         try:
             resp = ia_client.models.generate_content(
@@ -68,7 +68,7 @@ def procesar_pagina_individual_con_ia(pdf_page_bytes):
             return json.loads(resp.text)
         except Exception as e:
             if "503" in str(e) and intento < 2:
-                time.sleep(2 ** intento)  # Espera exponencial (2s, 4s)
+                time.sleep(2 ** intento)
                 continue
             raise e
 
@@ -91,7 +91,7 @@ except: datos_gerencias = []
 lista_gerencias = [str(g[0]).upper() for g in datos_gerencias[1:] if len(g)>0 and str(g[1]).upper()!="INACTIVO"]
 if not lista_gerencias: lista_gerencias = ["DPA"]
 
-tab_visor, tab_alta, tab_renovacion = st.tabs(["📊 Estado de Flota", "➕ Alta Inteligente Automatizada", "📅 Carga Masiva de Vencimientos"])
+tab_visor, tab_alta, tab_renovacion = st.tabs(["📊 Estado de Flota", "🚀 Alta Inteligente Automatizada", "📅 Carga Masiva de Vencimientos"])
 
 with tab_visor:
     st.markdown("### Semáforo Documental y Asignaciones")
@@ -110,7 +110,7 @@ with tab_visor:
 
 with tab_alta:
     st.markdown("### Procesamiento Absoluto de Títulos (Lotes o Multipágina)")
-    st.info("🤖 **Modo Empleada IA Extremo:** Arrastrá cualquier archivo. Si el PDF contiene 5 o 10 títulos juntos, la IA los va a separar, extraer los datos y guardar cada PDF renombrado de forma individual.")
+    st.info("🤖 **Modo Automático Activo:** La IA se encargará de fraccionar el documento, extraer los datos técnicos de cada unidad, generar los archivos individuales indexados y guardarlos en la base de datos.")
     
     archivos_titulos = st.file_uploader("Subir Títulos (PDF/Fotos)", type=["pdf", "png", "jpg"], accept_multiple_files=True)
     
@@ -121,7 +121,6 @@ with tab_alta:
             status_panel.write(f"📂 Abriendo archivo original: `{arch.name}`")
             
             try:
-                # Si es una foto, la procesamos directo
                 if arch.type.startswith("image/"):
                     pdf_bytes = asegurar_pdf(arch)
                     datos = procesar_pagina_individual_con_ia(pdf_bytes)
@@ -132,7 +131,6 @@ with tab_alta:
                         escribir_fila("FLOTA", fila)
                         status_panel.write(f"✅ Procesado unitario: **{patente}**")
                 
-                # Si es un PDF, lo abrimos página por página para procesar masivos sin saturar la API
                 else:
                     reader = pypdf.PdfReader(arch)
                     total_paginas = len(reader)
@@ -141,19 +139,16 @@ with tab_alta:
                     for idx in range(total_paginas):
                         status_panel.write(f"🔍 Analizando página {idx + 1} de {total_paginas}...")
                         
-                        # Extraer la página físicamente en un archivo PDF independiente en memoria
                         writer = pypdf.PdfWriter()
                         writer.add_page(reader.pages[idx])
                         page_io = io.BytesIO()
                         writer.write(page_io)
                         page_bytes = page_io.getvalue()
                         
-                        # Mandar a la IA a leer esta página específica
                         datos = procesar_pagina_individual_con_ia(page_bytes)
                         patente = str(datos.get("patente","")).upper().replace("-","").replace(" ","")
                         
                         if patente:
-                            # Subir a Drive únicamente esta página limpia renombrada con su patente
                             link = subir_archivo(f"TITULO_{patente}.pdf", page_bytes, ID_DRIVE_RAIZ, "FLOTA")
                             
                             fila = [
@@ -177,7 +172,7 @@ with tab_alta:
 
 with tab_renovacion:
     st.markdown("### Desglose Automático de Pólizas Flota / VTV")
-    st.info("🤖 Subí acá el PDF largo de la póliza (ej. el archivo con los 70 seguros juntos). La IA va a leer página por página, detectará a qué patente corresponde el vencimiento y lo dejará listo para impactar.")
+    st.info("🤖 Subí acá el PDF largo de la póliza. La IA va a leer página por página, detectará a qué patente corresponde el vencimiento y lo dejará listo para impactar.")
     
     archivo_masivo = st.file_uploader("Subir Póliza Completa o Lote de VTV (PDF)", type=["pdf"])
     
@@ -200,7 +195,6 @@ with tab_renovacion:
                 writer.write(page_io)
                 page_bytes = page_io.getvalue()
                 
-                # La IA extrae los datos de esta hoja de la póliza
                 datos = procesar_pagina_individual_con_ia(page_bytes)
                 patente = str(datos.get("patente","")).upper().replace("-","").replace(" ","")
                 fecha_vto = datos.get("fecha_vencimiento","")
@@ -223,7 +217,6 @@ with tab_renovacion:
                 st.dataframe(df_resumen, use_container_width=True, hide_index=True)
                 
                 if st.button("💾 Confirmar e Inyectar todos los vencimientos en FLOTA"):
-                    # Aquí irá el bucle que impactará las celdas de Sheets correspondientes
                     st.success("Lógica de inyección en lote lista.")
             else:
                 st.warning("No se encontraron registros estructurados legibles en las páginas analizadas.")
