@@ -15,7 +15,7 @@ def extraer_id_drive(url_drive):
     match = re.search(r'(?:/d/|id=)([a-zA-Z0-9_-]+)', url_drive)
     return match.group(1) if match else None
 
-def procesar_documento_flota_ia(pdf_bytes, tipo_sugerido, modelo_elegido='gemini-2.5-flash', max_reintentos=3):
+def procesar_documento_flota_ia(pdf_bytes, tipo_sugerido, modelo_ia, max_reintentos=3):
     prompt = f"""
     Actúa como un auditor experto en documentación automotriz. Analiza el documento de tipo: {tipo_sugerido}.
     Devuelve estrictamente un objeto JSON estructurado con este formato exacto:
@@ -34,24 +34,32 @@ def procesar_documento_flota_ia(pdf_bytes, tipo_sugerido, modelo_elegido='gemini
     
     for intento in range(max_reintentos):
         try:
-            # 🌟 CORRECCIÓN: Usamos el alias de modelo estable de producción
             resp = ia_client.models.generate_content(
-                model=modelo_elegido, 
+                model=modelo_ia, 
                 contents=[doc, prompt], 
                 config=types.GenerateContentConfig(response_mime_type="application/json")
             )
             return json.loads(resp.text)
         except Exception as e:
             if intento < max_reintentos - 1:
-                time.sleep(10)
+                time.sleep(8)
                 continue
             raise e
 
 st.markdown("## ⚙️ Motor de Procesamiento Cognitivo (IA Flota)")
 st.divider()
 
-# Dejamos activado por defecto el reprocesar fallas anteriores para rescatar los 5 que te fallaron recién
-reprocesar_fallidos = st.checkbox("🔄 Intentar reprocesar registros marcados con error anteriormente", value=True)
+# 🎛️ CONFIGURACIÓN DE MODELOS HOMOLOGADOS
+col_config1, col_config2 = st.columns(2)
+with col_config1:
+    modelo_seleccionado = st.selectbox(
+        "🧠 Seleccionar Cerebro IA",
+        options=["gemini-3.5-flash", "gemini-3.1-pro"],
+        help="Use 3.5 Flash por defecto (veloz y eficiente). Use 3.1 Pro para casos de baja legibilidad."
+    )
+with col_config2:
+    reprocesar_fallidos = st.checkbox("🔄 Intentar reprocesar registros con marcas de error previas", value=True)
+
 loop_activo = st.checkbox("🔄 **Modo Escaneo Continuo Automático**", value=False)
 iniciar_manual = False if loop_activo else st.button("▶️ Iniciar Extracción Cognitiva Manual", type="primary")
 
@@ -67,7 +75,7 @@ if loop_activo or iniciar_manual:
     if not pendientes:
         st.info("✅ No hay documentos de flota esperando procesamiento en este momento.")
     else:
-        st.success(f"Encontrados {len(pendientes)} registros listos para lectura. Procesando...")
+        st.success(f"Encontrados {len(pendientes)} registros listos para lectura usando **{modelo_seleccionado}**. Procesando...")
         barra_general = st.progress(0)
         status_text = st.empty()
         exitosos, fallidos = 0, 0
@@ -84,8 +92,8 @@ if loop_activo or iniciar_manual:
                 
                 if not file_bytes: raise Exception("Error al descargar archivo desde Google Drive.")
                 
-                # Invocación con el modelo oficial homologado
-                datos_extraidos = procesar_documento_flota_ia(file_bytes, tipo_sugerido, modelo_elegido='gemini-2.5-flash')
+                # Invocación pasando el modelo seleccionado de la lista oficial
+                datos_extraidos = procesar_documento_flota_ia(file_bytes, tipo_sugerido, modelo_seleccionado)
                 
                 actualizar_estado_carga("PENDIENTES_FLOTA", id_carga, "PARA_AUDITAR_FLOTA", json.dumps(datos_extraidos, ensure_ascii=False))
                 exitosos += 1
@@ -108,6 +116,6 @@ if loop_activo or iniciar_manual:
         st.write("---")
         reloj = st.empty()
         for count in range(60, 0, -1):
-            reloj.info(f"⏱️ Próximo escaneo en: **{count} segundos**...")
+            reloj.info(f"⏱ orphan_ próximo escaneo en: **{count} segundos**...")
             time.sleep(1)
         st.rerun()
