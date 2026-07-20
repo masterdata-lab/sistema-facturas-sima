@@ -17,9 +17,9 @@ st.set_page_config(page_title="Motor de Extracción - Flota", page_icon="🧠", 
 st.title("🧠 Motor de Extracción Cognitiva Real (Flota)")
 st.markdown("---")
 
-# 1. Conexión Real
+# 1. Conexión Real (Acá actualizamos el nombre de tu hoja)
 try:
-    HOJA_FLOTA = st.secrets.get("HOJA_FLOTA", "FLOTA_PENDIENTES") 
+    HOJA_FLOTA = st.secrets.get("HOJA_FLOTA", "PENDIENTES_FLOTA") 
     ia_client = obtener_cliente_gemini()
 except Exception as e:
     st.error(f"Error al inicializar las conexiones: {e}")
@@ -95,7 +95,7 @@ if btn_iniciar or loop_activo:
                 pendientes.append(fila)
 
     if not pendientes:
-        st.info("✅ No se encontraron documentos 'PENDIENTE' para la flota.")
+        st.info(f"✅ No se encontraron documentos 'PENDIENTE' en la hoja {HOJA_FLOTA}.")
     else:
         st.success(f"🚀 Encontrados {len(pendientes)} documentos. Procesando con Drive y Gemini...")
         barra_general = st.progress(0)
