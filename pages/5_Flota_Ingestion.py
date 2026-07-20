@@ -42,11 +42,11 @@ with col_ia:
                 status_placeholder.info(f"⏳ Subiendo e indexando en Drive ({idx+1}/{total}): **{archivo.name}**")
                 
                 try:
-                    # Leemos los bytes crudos del archivo
+                    # Guardamos el nombre plano en una variable string aislada
+                    nombre_archivo_plano = str(archivo.name)
                     bytes_crudos = archivo.read()
                     
-                    # --- COMPORTAMIENTO DE FIRMA HOMOLOGADO ---
-                    # 1º El objeto archivo (Streamlit), 2º los bytes crudos, 3º el ID de carpeta raíz
+                    # Subida a Drive exitosa
                     link_drive = subir_archivo(archivo, bytes_crudos, ID_DRIVE_RAIZ)
                     
                     if not link_drive or link_drive == "N/A":
@@ -54,7 +54,7 @@ with col_ia:
                     
                     id_carga = f"FLOTA_{uuid.uuid4().hex[:8].upper()}"
                     
-                    nombre_minuscula = archivo.name.lower()
+                    nombre_minuscula = nombre_archivo_plano.lower()
                     if "titulo" in nombre_minuscula:
                         tipo_sugerido = "TITULO"
                     elif "seguro" in nombre_minuscula or "poliza" in nombre_minuscula:
@@ -66,24 +66,27 @@ with col_ia:
                     else:
                         tipo_sugerido = "CEDULA_VERDE"
                         
+                    # Aislamos el diccionario garantizando que son solo STRINGS nativos de Python
                     datos_predichos = {
                         "patente": "N/A", 
-                        "tipo_sugerido": tipo_sugerido, 
-                        "origen": archivo.name,
+                        "tipo_sugerido": str(tipo_sugerido), 
+                        "origen": nombre_archivo_plano,
                         "titular": "",
                         "cuit_cuil": ""
                     }
                     
+                    payload_json = json.dumps(datos_predichos, ensure_ascii=False)
+                    
                     escribir_fila("PENDIENTES", [
-                        id_carga, 
-                        time.strftime("%d/%m/%Y"), 
-                        archivo.name, 
+                        str(id_carga), 
+                        str(time.strftime("%d/%m/%Y")), 
+                        nombre_archivo_plano, 
                         "OPERADOR_FLOTA", 
-                        link_drive, 
-                        id_carga, 
+                        str(link_drive), 
+                        str(id_carga), 
                         "PARA_AUDITAR_FLOTA", 
                         "Subida correcta. Esperando visado humano.", 
-                        json.dumps(datos_predichos)
+                        payload_json
                     ])
                     
                 except Exception as e:
@@ -105,27 +108,34 @@ with col_manual:
         if st.form_submit_button("📥 Enviar a Cola de Control", use_container_width=True):
             if archivo_m:
                 try:
+                    nombre_manual_plano = str(archivo_m.name)
                     bytes_crudos_m = archivo_m.read()
                     
-                    # --- MANUAL AJUSTADO IGUAL QUE EL LOTE ---
                     link_drive_m = subir_archivo(archivo_m, bytes_crudos_m, ID_DRIVE_RAIZ)
                     
                     if not link_drive_m or link_drive_m == "N/A":
                         raise ValueError("No se pudo obtener enlace de Drive en la carga manual.")
                         
                     id_carga_m = f"FLOTA_{uuid.uuid4().hex[:8].upper()}"
-                    datos_m = {"patente": patente_m if patente_m else "N/A", "tipo_sugerido": tipo_m, "origen": archivo_m.name}
+                    
+                    datos_m = {
+                        "patente": str(patente_m) if patente_m else "N/A", 
+                        "tipo_sugerido": str(tipo_m), 
+                        "origen": nombre_manual_plano
+                    }
+                    
+                    payload_json_m = json.dumps(datos_m, ensure_ascii=False)
                     
                     escribir_fila("PENDIENTES", [
-                        id_carga_m, 
-                        time.strftime("%d/%m/%Y"), 
-                        archivo_m.name, 
+                        str(id_carga_m), 
+                        str(time.strftime("%d/%m/%Y")), 
+                        nombre_manual_plano, 
                         "MANUAL", 
-                        link_drive_m, 
-                        id_carga_m, 
+                        str(link_drive_m), 
+                        str(id_carga_m), 
                         "PARA_AUDITAR_FLOTA", 
                         "Ingreso manual directo.", 
-                        json.dumps(datos_m)
+                        payload_json_m
                     ])
                     st.success("¡Enviado a la cola de revisión!")
                     time.sleep(0.8)
