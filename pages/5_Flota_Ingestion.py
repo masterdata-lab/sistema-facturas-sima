@@ -39,13 +39,12 @@ with col_ia:
             total = len(archivos_cargados)
             
             for idx, archivo in enumerate(archivos_cargados):
-                # Actualización de UI
                 porcentaje = int((idx + 1) / total * 100)
                 progreso_bar.progress(porcentaje)
                 status_placeholder.info(f"⏳ Subiendo e indexando en Drive ({idx+1}/{total}): **{archivo.name}**")
                 
                 try:
-                    # 1. SUBIDA EN VIVO A DRIVE
+                    # SUBIDA CORREGIDA CON ARGUMENTO POSICIONAL ESTRICTO
                     link_drive = subir_archivo(archivo, ID_DRIVE_RAIZ)
                     
                     if not link_drive or link_drive == "N/A":
@@ -53,7 +52,6 @@ with col_ia:
                     
                     id_carga = f"FLOTA_{uuid.uuid4().hex[:8].upper()}"
                     
-                    # 2. PREDICCIÓN DE ENRUTAMIENTO (IA MOCK)
                     nombre_minuscula = archivo.name.lower()
                     if "titulo" in nombre_minuscula:
                         tipo_sugerido = "TITULO"
@@ -74,7 +72,6 @@ with col_ia:
                         "cuit_cuil": ""
                     }
                     
-                    # 3. VOLCADO A TABLA DE TRABAJO (PENDIENTES)
                     escribir_fila("PENDIENTES", [
                         id_carga, 
                         time.strftime("%d/%m/%Y"), 
@@ -106,9 +103,13 @@ with col_manual:
         if st.form_submit_button("📥 Enviar a Cola de Control", use_container_width=True):
             if archivo_m:
                 try:
+                    # CORRECCIÓN DE LA SUBIDA MANUAL: Pasando exactamente los argumentos requeridos en orden
                     link_drive_m = subir_archivo(archivo_m, ID_DRIVE_RAIZ)
-                    id_carga_m = f"FLOTA_{uuid.uuid4().hex[:8].upper()}"
                     
+                    if not link_drive_m or link_drive_m == "N/A":
+                        raise ValueError("No se pudo obtener enlace de Drive en la carga manual.")
+                        
+                    id_carga_m = f"FLOTA_{uuid.uuid4().hex[:8].upper()}"
                     datos_m = {"patente": patente_m if patente_m else "N/A", "tipo_sugerido": tipo_m, "origen": archivo_m.name}
                     
                     escribir_fila("PENDIENTES", [
