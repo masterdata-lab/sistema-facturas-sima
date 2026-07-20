@@ -1,164 +1,154 @@
 import streamlit as st
 import json
 import re
-import time
-from utils.conexiones import leer_hoja_completa, escribir_fila, actualizar_estado_carga
+from datetime import datetime
+from utils.conexiones import (leer_hoja_completa, actualizar_estado_carga, escribir_fila, H_PENDIENTES)
 
-st.set_page_config(page_title="DPA | Auditoría Flota", page_icon="⚖️", layout="wide")
+st.set_page_config(page_title="DPA | Auditoría de Flota", page_icon="⚖️", layout="wide", initial_sidebar_state="collapsed")
 
-# Estilos CSS específicos para controlar la estructura visual del ERP
-st.markdown("""
+# Estilos idénticos al ecosistema SIMA
+st.markdown('''
 <style>
     .block-container { padding-top: 1rem; padding-bottom: 1rem; }
-    iframe { border: 2px solid #e6e9ef; border-radius: 8px; background-color: #fafafa; }
-    .stAlert { padding: 0.75rem; }
+    [data-testid="collapsedControl"] { border: 2px solid #ff4b4b; border-radius: 50%; box-shadow: 0px 0px 5px rgba(255,75,75,0.8); }
+    .stAlert { padding: 0.5rem; }
+    ::-webkit-scrollbar { width: 10px !important; height: 10px !important; background-color: #f1f1f1 !important; }
+    ::-webkit-scrollbar-thumb { background-color: #c1c1c1 !important; border-radius: 5px !important; }
+    .firma-flotante { position: fixed; bottom: 8px; right: 15px; font-size: 10.5px; color: rgba(128, 128, 128, 0.6); z-index: 99999; pointer-events: none; font-family: monospace; }
 </style>
-""", unsafe_allow_html=True)
+<div class="firma-flotante">Software DPA | Creado por Serrano Cristian</div>
+''', unsafe_allow_html=True)
 
 def extraer_id_drive(url_drive):
-    if not url_drive or url_drive == "N/A": 
-        return None
-    # Captura variaciones de URL compartida o de APIs (/d/ o id=)
+    if not url_drive or url_drive == "N/A": return None
     match = re.search(r'(?:/d/|id=)([a-zA-Z0-9_-]+)', url_drive)
-    if match:
-        return match.group(1)
-    # Si la celda contiene directamente el ID crudo sin barras
-    if len(url_drive) > 20 and "/" not in url_drive and "=" not in url_drive:
-        return url_drive
-    return None
+    return match.group(1) if match else None
 
-# Carga en caliente del maestro de patentes para validación cruzada relacional
-try: 
-    datos_flota = leer_hoja_completa("FLOTA")
-except Exception as e: 
-    datos_flota = []
-    st.error(f"Error al conectar con la base maestra FLOTA: {e}")
-
-patentes_existentes = [str(f[0]).strip().upper() for f in datos_flota[1:] if f and len(f) > 0]
-
-st.title("⚖️ Mesa de Auditoría: Documentación de Flota")
-st.markdown("Verificación humana de consistencia, vigencia y asignaciones vehiculares.")
+st.markdown("## ⚖️ Módulo de Auditoría Humana: Control de Flota")
 st.divider()
 
-# Lectura del buzón general descentralizado
-try: 
-    cola_pendientes = leer_hoja_completa("PENDIENTES")
-except: 
-    cola_pendientes = []
+with st.spinner("Buscando documentos de flota pendientes..."):
+    # REPLICACIÓN: Leemos la misma hoja PENDIENTES que usa facturación
+    datos_cola = leer_hoja_completa("PENDIENTES")
 
-# Filtrado estricto por flujo documental de flota
-registros_flota = [f for f in cola_pendientes[1:] if len(f) >= 7 and f[6] == "PARA_AUDITAR_FLOTA"]
+# 🔍 EL FILTRO CRÍTICO: Capturamos el estado específico que configuramos en Ingestión
+para_auditar = [f for f in datos_cola[1:] if len(f) >= 7 and f[6] == "PARA_AUDITAR_FLOTA"]
 
-if not registros_flota:
-    st.success("🎉 Excelente. No hay documentación de flota pendiente de auditoría humana.")
+if not para_auditar:
+    st.success("🎉 No hay documentos de flota pendientes de visado humano.")
 else:
-    # Selector de tareas pendientes
+    # Construcción de la bandeja de entrada para el Selectbox
     opciones = {}
-    for r in registros_flota:
-        try: 
-            sugerido = json.loads(r[8]).get("tipo_sugerido", "DOC")
-        except: 
-            sugerido = "DOC"
-        opciones[r[0]] = f"📄 {sugerido} | Archivo: {r[2][:30]}... | Fecha: {r[1]}"
+    for fila in para_auditar:
+        tipo_doc_sugerido = "Documento"
+        if len(fila) >= 9 and fila[8]:
+            try: tipo_doc_sugerido = json.loads(fila[8]).get("tipo_sugerido", "Documento")
+            except: pass
+        opciones[fila[0]] = f"📋 {tipo_doc_sugerido} | 📄 {fila[2]} | 📅 {fila[1]}"
         
-    seleccion = st.selectbox("Seleccionar comprobante en cola para auditar:", options=list(opciones.keys()), format_func=lambda x: opciones[x])
+    carga_seleccionada = st.selectbox("Seleccionar registro a auditar:", options=list(opciones.keys()), format_func=lambda x: opciones[x])
+    fila_actual = next(f for f in para_auditar if f[0] == carga_seleccionada)
     
-    fila_actual = next(f for f in registros_flota if f[0] == seleccion)
-    id_carga, url_pdf, json_crudo = fila_actual[0], fila_actual[4], fila_actual[8]
+    # Mapeo posicional exacto de columnas de PENDIENTES
+    id_carga, fecha_ingreso, nombre_archivo, operador, link_drive, _, estado_actual, _, json_crudo = fila_actual[0:9]
     
     datos_ia = {}
     if json_crudo:
-        try: 
-            datos_ia = json.loads(json_crudo)
-        except: 
-            pass
+        try: datos_ia = json.loads(json_crudo)
+        except: pass
 
-    # INTERFAZ SPLIT-SCREEN 50% VISOR DRIVE / 50% VALIDACIÓN HUMANA
-    col_visor, col_datos = st.columns([1, 1], gap="large")
+    st.divider()
     
-    with col_visor:
-        st.subheader("👀 Copia Fiel del Documento")
-        id_drive = extraer_id_drive(url_pdf)
+    # 50/50 Split Screen Layout homologado
+    col_pdf, col_datos = st.columns([1, 1], gap="medium")
+    
+    with col_pdf:
+        st.markdown("### 📄 Vista Previa del Documento")
+        id_drive = extraer_id_drive(link_drive)
         if id_drive:
             url_preview = f"https://drive.google.com/file/d/{id_drive}/preview"
-            st.markdown(f'<iframe src="{url_preview}" width="100%" height="800px" allow="autoplay"></iframe>', unsafe_allow_html=True)
-        else:
-            st.error("Error estructural: No se puede extraer un ID de Google Drive válido desde el enlace registrado.")
-            st.info(f"Enlace crudo en base de datos: {url_pdf}")
-            
+            st.markdown(f'<iframe src="{url_preview}" width="100%" height="800px" style="border: none; border-radius: 8px;"></iframe>', unsafe_allow_html=True)
+        else: 
+            st.error("No se pudo extraer el ID de Google Drive para la vista previa.")
+            st.markdown(f"[🔗 Abrir enlace externo del archivo]({link_drive})")
+    
     with col_datos:
-        st.subheader("📝 Formulario de Veracidad e Impacto")
+        st.markdown("### ✍️ Formulario de Validación e Inyección")
         
-        # Corregidor e inyector de tipo dinámico
-        tipos_validos = ["TITULO", "CEDULA_VERDE", "CERTIFICADO_SEGURO", "VTV", "YPF"]
-        tipo_leido = datos_ia.get("tipo_sugerido", "CEDULA_VERDE")
-        idx_defecto = tipos_validos.index(tipo_leido) if tipo_leido in tipos_validos else 1
+        # Precarga inteligente de los datos estructurados que inyectó la Ingestión
+        patente_sugerida = str(datos_ia.get("patente", "N/A")).upper().strip()
+        tipo_sugerido = str(datos_ia.get("tipo_sugerido", "CEDULA_VERDE")).upper().strip()
         
-        tipo_documento = st.selectbox("Tipo de Documento Homologado", tipos_validos, index=idx_defecto)
-        
-        patente = st.text_input("Patente del Vehículo (Formato limpio sin espacios)", value=datos_ia.get("patente", "N/A")).upper().strip()
-        
-        # --- LÓGICA CORE: ALTA AUTOMÁTICA O VALIDACIÓN DE EXISTENCIA ---
-        es_alta_nueva = False
-        if patente and patente != "N/A":
-            if patente not in patentes_existentes:
-                if tipo_documento == "TITULO":
-                    st.info("ℹ️ **Modo Alta de Activo Detectado:** Esta patente no se encuentra registrada en el sistema. Al confirmar este Título, el vehículo se incorporará automáticamente a la base maestra FLOTA.")
-                    es_alta_nueva = True
+        with st.form("form_auditoria_flota", clear_on_submit=True):
+            st.markdown("#### Datos Extraídos / Sugeridos")
+            
+            # Inputs para corrección humana
+            patente_validada = st.text_input("Patente Homologada (Obligatorio)", value="" if patente_sugerida == "N/A" else patente_sugerida).upper().strip()
+            
+            tipo_documento = st.selectbox(
+                "Tipo de Documento Confirmado", 
+                ["TITULO", "CEDULA_VERDE", "CERTIFICADO_SEGURO", "VTV", "YPF"],
+                index=["TITULO", "CEDULA_VERDE", "CERTIFICADO_SEGURO", "VTV", "YPF"].index(tipo_sugerido) if tipo_sugerido in ["TITULO", "CEDULA_VERDE", "CERTIFICADO_SEGURO", "VTV", "YPF"] else 1
+            )
+            
+            titular = st.text_input("Titular del Vehículo (Si aplica)", value=datos_ia.get("titular", ""))
+            cuit_cuil = st.text_input("CUIT / CUIL Asociado", value=datos_ia.get("cuit_cuil", ""))
+            
+            st.write("---")
+            st.markdown("#### Acciones")
+            
+            c_btn1, c_btn2 = st.columns(2)
+            with c_btn1:
+                btn_aprobar = st.form_submit_button("✅ Aprobar e Inyectar", use_container_width=True)
+            with c_btn2:
+                btn_descartar = st.form_submit_button("🗑️ Descartar Documento", use_container_width=True)
+                
+            if btn_aprobar:
+                if not patente_validada:
+                    st.error("❌ Se requiere una patente válida para procesar el documento en el maestro de flota.")
                 else:
-                    st.error("⚠️ Operación bloqueada: La patente no figura en la base maestra FLOTA. Para procesar este documento secundario, primero debés dar de alta la unidad usando su TITULO o ingresarla manualmente en el maestro.")
-            else:
-                st.success("✅ Vehículo validado en la flota activa corporativa.")
-        
-        st.markdown("---")
-        st.markdown("#### Datos Extraídos del Documento")
-        c1, c2 = st.columns(2)
-        with c1: 
-            titular = st.text_input("Titular / Tomador Registrado", value=datos_ia.get("titular", ""))
-        with c2: 
-            cuit_cuil = st.text_input("CUIT / CUIL Vinculado", value=datos_ia.get("cuit_cuil", ""))
-        
-        # Inputs condicionales basados en el negocio
-        vencimiento = ""
-        if tipo_documento == "CERTIFICADO_SEGURO":
-            c3, c4 = st.columns(2)
-            with c3: aseguradora = st.text_input("Compañía Aseguradora (Ej: Rivadavia, Sancor)")
-            with c4: poliza = st.text_input("Número de Póliza de Seguro")
-            vencimiento = st.text_input("Fecha Vencimiento de Póliza (DD/MM/YYYY)")
+                    with st.spinner("Procesando inyección en el módulo correspondiente..."):
+                        # REGLA DE NEGOCIO 1: Si es TÍTULO, impacta directo en la base de datos "FLOTA"
+                        if tipo_documento == "TITULO":
+                            # Estructura maestra: Patente, Tipo, Titular, CUIT, Link Documento, Fecha Registro
+                            escribir_fila("FLOTA", [
+                                patente_validada, 
+                                "ALTA_AUTOMATICA_TITULO", 
+                                titular, 
+                                cuit_cuil, 
+                                link_drive, 
+                                datetime.now().strftime("%d/%m/%Y")
+                            ])
+                            msg_destino = "inyectado en la base maestra FLOTA"
+                        
+                        # REGLA DE NEGOCIO 2: Si es SEGURO, archiva en "HISTORIAL_SEGUROS"
+                        elif tipo_documento == "CERTIFICADO_SEGURO":
+                            escribir_fila("HISTORIAL_SEGUROS", [
+                                patente_validada, 
+                                datetime.now().strftime("%d/%m/%Y"), 
+                                link_drive, 
+                                titular
+                            ])
+                            msg_destino = "archivado en HISTORIAL_SEGUROS"
+                        
+                        # Para otros documentos, se pueden agregar sus respectivas tablas aquí
+                        else:
+                            escribir_fila("HISTORIAL_GENERAL_FLOTA", [
+                                patente_validada, 
+                                tipo_documento, 
+                                link_drive, 
+                                datetime.now().strftime("%d/%m/%Y")
+                            ])
+                            msg_destino = "registrado en el historial general"
+                        
+                        # Actualizamos el estado de la cola en PENDIENTES a APROBADA
+                        actualizar_estado_carga("PENDIENTES", id_carga, "APROBADA")
+                        st.success(f"🎉 Documento {nombre_archivo} procesado e {msg_destino} con éxito.")
+                        time.sleep(1)
+                        st.rerun()
             
-        elif tipo_documento != "CEDULA_VERDE":
-            # Las cédulas verdes no disparan alertas restrictivas por diseño conceptual
-            vencimiento = st.text_input("Fecha Vencimiento del Documento (DD/MM/YYYY)")
-            
-        st.markdown("---")
-        b_aprobar, b_descartar = st.columns(2)
-        
-        # El botón de aprobación se deshabilita si la patente no existe y no califica para alta automática por título
-        bloqueado = (patente not in patentes_existentes and not es_alta_nueva) or (patente == "N/A")
-        
-        if b_aprobar.button("✅ Confirmar y Transferir a Producción", type="primary", use_container_width=True, disabled=bloqueado):
-            with st.spinner("Realizando transacciones y aplicando reglas de negocio..."):
-                hoy = time.strftime("%d/%m/%Y")
-                
-                # REGLA A: Creación automática del registro físico en la pestaña principal
-                if es_alta_nueva and tipo_documento == "TITULO":
-                    # Estructura de columnas simulada para calzar en tu hoja maestra FLOTA
-                    fila_maestro_flota = [patente, "ACTIVO", cuit_cuil, "DPA", "AUTO", "", "", "", "", "", "", "", "", "", "", "", "", "", "", f"Alta automatizada via auditoría de Título el {hoy}"]
-                    escribir_fila("FLOTA", fila_maestro_flota)
-                
-                # REGLA B: Envío retroactivo permanente para auditoría de Seguros
-                if tipo_documento == "CERTIFICADO_SEGURO":
-                    fila_historial_seguro = [patente, aseguradora, poliza, hoy, vencimiento, titular, cuit_cuil, url_pdf, hoy]
-                    escribir_fila("HISTORIAL_SEGUROS", fila_historial_seguro)
-                
-                # Cierre y limpieza del registro en pendientes
-                actualizar_estado_carga("PENDIENTES", id_carga, "APROBADO_FLOTA")
-                st.success("¡Documento visado e impactado en las bases de datos con éxito!")
+            if btn_descartar:
+                actualizar_estado_carga("PENDIENTES", id_carga, "DESCARTADO")
+                st.warning("Documento marcado como descartado.")
                 time.sleep(0.8)
                 st.rerun()
-                
-        if b_descartar.button("🗑️ Descartar y Quitar de la Cola", use_container_width=True):
-            actualizar_estado_carga("PENDIENTES", id_carga, "DESCARTADO_FLOTA")
-            st.warning("El archivo ha sido removido de la bandeja operativa.")
-            time.sleep(0.5)
-            st.rerun()
