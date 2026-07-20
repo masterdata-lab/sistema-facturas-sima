@@ -4,7 +4,7 @@ import json
 import re
 from google.genai import types
 
-# 🔌 Importamos las conexiones de tu ecosistema real (Mismo que facturas)
+# 🔌 Importamos las conexiones de tu ecosistema real
 from utils.conexiones import (
     obtener_cliente_gemini, 
     leer_hoja_completa, 
@@ -77,7 +77,16 @@ COL_TIPO = 3       # Columna D
 COL_LINK = 4       # Columna E 
 COL_ESTADO = 6     # Columna G 
 
-btn_iniciar = st.button("▶️ Iniciar Procesamiento Manual", type="primary", disabled=loop_activo)
+st.markdown("---")
+# --- BOTONES DE CONTROL ---
+col_btn1, col_btn2 = st.columns([1, 4])
+with col_btn1:
+    btn_iniciar = st.button("▶️ Iniciar Procesamiento", type="primary", disabled=loop_activo)
+with col_btn2:
+    if st.button("⏹️ Detener / Cancelar Proceso"):
+        st.warning("🛑 Proceso detenido por el usuario.")
+        st.stop()
+st.markdown("---")
 
 if btn_iniciar or loop_activo:
     with st.spinner(f"Buscando documentos en hoja '{HOJA_FLOTA}'..."):
@@ -91,7 +100,6 @@ if btn_iniciar or loop_activo:
     for fila in datos_cola[1:]:
         if len(fila) > COL_ESTADO:
             estado_actual = str(fila[COL_ESTADO]).strip().upper()
-            # ACÁ ESTÁ EL CAMBIO: Ahora busca PENDIENTE_FLOTA
             if estado_actual == "PENDIENTE_FLOTA" or (reprocesar_errores and "ERROR_IA" in estado_actual):
                 pendientes.append(fila)
 
@@ -147,7 +155,7 @@ if btn_iniciar or loop_activo:
         st.write("---")
         reloj = st.empty()
         for i in range(60, 0, -1):
-            reloj.info(f"⏱️ Próximo escaneo automático en: **{i} segundos**... No cierres esta pestaña.")
+            reloj.info(f"⏱️ Próximo escaneo automático en: **{i} segundos**... (Usá el botón ⏹️ Detener para cancelar)")
             time.sleep(1)
         st.rerun()
 
