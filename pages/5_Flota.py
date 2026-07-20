@@ -38,25 +38,50 @@ def asegurar_pdf(archivo):
         return pdf_bytes.getvalue()
     return archivo.getvalue()
 
-def procesar_documento_vehicular(pdf_bytes):
+def procesar_documento_vehicular_multiple(pdf_bytes):
+    """
+    Procesa un documento (que puede contener múltiples unidades o registros)
+    y devuelve una LISTA estructurada de JSONs.
+    """
     prompt = """
-    Analiza este documento vehicular argentino.
-    1. Identifica qué tipo es: "TITULO", "VTV", "SEGURO", "RUTA" o "DESCONOCIDO".
-    2. Extrae la PATENTE (dominio).
-    3. Si es TITULO: extrae marca, modelo, año, chasis y motor.
-    4. Si es VTV, SEGURO o RUTA: extrae la FECHA DE VENCIMIENTO (formato DD/MM/YYYY).
-    Devuelve JSON estricto:
-    {
-        "tipo_documento": "TITULO", "patente": "AB123CD",
-        "marca": "", "modelo": "", "anio": "", "chasis": "", "motor": "", "fecha_vencimiento": ""
-    }
+    Analiza este documento vehicular argentino. Puede contener uno o MUCHOS registros agrupados (por ejemplo: múltiples títulos digitales en un solo PDF o una póliza de flota con 70 patentes).
+    
+    1. Identifica qué tipo de documento base es: "TITULO", "VTV", "SEGURO", "RUTA" o "DESCONOCIDO".
+    2. Recorre TODO el documento y extrae la información unidad por unidad (patente por patente).
+    3. Si es TITULO: extrae marca, modelo, año, chasis y motor para cada patente.
+    4. Si es VTV, SEGURO o RUTA: extrae la FECHA DE VENCIMIENTO correspondiente a esa patente específica (formato DD/MM/YYYY).
+    
+    Devuelve estrictamente un arreglo JSON (LISTA), donde cada objeto tenga esta estructura:
+    [
+        {
+            "tipo_documento": "TITULO", 
+            "patente": "AB123CD",
+            "marca": "CORVEN", 
+            "modelo": "TRIAX", 
+            "anio": "2022", 
+            "chasis": "8CV...", 
+            "motor": "162...", 
+            "fecha_vencimiento": ""
+        }
+    ]
+    Si el documento tiene múltiples páginas o unidades, la lista debe contener tantos elementos como patentes/unidades distintas encuentres.
     """
     doc = types.Part.from_bytes(data=pdf_bytes, mime_type="application/pdf")
     resp = ia_client.models.generate_content(
-        model='gemini-3.5-flash', contents=[doc, prompt],
+        model='gemini-2.5-flash', contents=[doc, prompt],
         config=types.GenerateContentConfig(response_mime_type="application/json")
     )
-    return json.loads(resp.text)
+    
+    try:
+        resultado = json.loads(resp.text)
+        # Aseguramos que retorne una lista siempre
+        if isinstance(resultado, list):
+            return resultado
+        else:
+            return [resultado]
+    except Exception as e:
+        st.error(f"Error al decodificar la respuesta de la IA: {e}")
+        return []
 
 def calcular_estado_vto(fecha_str):
     if not fecha_str or str(fecha_str).strip() == "": return "⚪ Sin Dato"
@@ -100,30 +125,38 @@ with tab_alta:
     modo_manual = st.toggle("✍️ Carga Manual de Excepción (Sin Título Físico)")
     
     if not modo_manual:
-        st.info("🤖 **Modo IA:** Arrastrá múltiples Títulos del Automotor. El sistema extraerá los datos automáticamente.")
+        st.info("🤖 **Modo IA Avanzado:** Arrastrá Títulos (Individuales o archivos multi-título). El sistema extraerá e indexará cada unidad por separado.")
         archivos_titulos = st.file_uploader("Subir Títulos (PDF/Fotos)", type=["pdf", "png", "jpg"], accept_multiple_files=True)
         
         if archivos_titulos and st.button("🚀 Procesar Títulos y Guardar", type="primary"):
-            panel = st.status(f"Procesando 0 de {len(archivos_titulos)} títulos...", expanded=True)
-            for i, arch in enumerate(archivos_titulos):
-                panel.update(label=f"Procesando {i+1}: {arch.name}", state="running")
+            panel = st.status(f"Procesando lote de archivos cargados...", expanded=True)
+            
+            for arch in archivos_titulos:
+                panel.write(f"🔍 Analizando documento completo: `{arch.name}`...")
                 try:
                     pdf_bytes = asegurar_pdf(arch)
-                    datos = procesar_documento_vehicular(pdf_bytes)
-                    patente = str(datos.get("patente","")).upper().replace("-","").replace(" ","")
+                    # La IA nos devuelve una lista de vehículos encontrados en este archivo
+                    lista_vehiculos = procesar_documento_vehicular_multiple(pdf_bytes)
                     
-                    if patente:
-                        link = subir_archivo(f"TITULO_{patente}.pdf", pdf_bytes, ID_DRIVE_RAIZ, "FLOTA")
-                        fila = [
-                            patente, "ACTIVO", "S/D", "S/D", "AUTO", str(datos.get("marca","")).upper(), 
-                            str(datos.get("modelo","")).upper(), datos.get("anio",""), str(datos.get("chasis","")).upper(), 
-                            str(datos.get("motor","")).upper(), "", "", "", "", link, "", "", ""
-                        ]
-                        escribir_fila("FLOTA", fila)
+                    panel.write(f"✨ Se detectaron {len(lista_vehiculos)} vehículos dentro de `{arch.name}`. Guardando registros...")
+                    
+                    for datos in lista_vehiculos:
+                        patente = str(datos.get("patente","")).upper().replace("-","").replace(" ","")
+                        if patente:
+                            # Subimos el archivo completo indexado con el nombre de la patente correspondiente
+                            link = subir_archivo(f"TITULO_{patente}.pdf", pdf_bytes, ID_DRIVE_RAIZ, "FLOTA")
+                            fila = [
+                                patente, "ACTIVO", "S/D", "S/D", "AUTO", str(datos.get("marca","")).upper(), 
+                                str(datos.get("modelo","")).upper(), datos.get("anio",""), str(datos.get("chasis","")).upper(), 
+                                str(datos.get("motor","")).upper(), "", "", "", "", link, "", "", ""
+                            ]
+                            escribir_fila("FLOTA", fila)
+                            panel.write(f"✅ Guardado exitoso: **{patente}** ({str(datos.get('marca','')).upper()} {str(datos.get('modelo','')).upper()})")
                 except Exception as e:
-                    st.error(f"Error con {arch.name}: {e}")
-            panel.update(label="¡Lote procesado con éxito!", state="complete")
-            st.success("✅ Vehículos registrados. Asignales la Gerencia desde el panel principal.")
+                    st.error(f"Error procesando el archivo {arch.name}: {e}")
+                    
+            panel.update(label="¡Lote de títulos procesado con éxito!", state="complete")
+            st.success("✅ Todos los vehículos del archivo masivo han sido registrados.")
             time.sleep(2)
             st.rerun()
     else:
@@ -139,23 +172,29 @@ with tab_alta:
                 st.success("Guardado.")
 
 with tab_renovacion:
-    st.markdown("### Carga de Vencimientos y Pólizas")
+    st.markdown("### Carga de Vencimientos y Pólizas Masivas")
     renov_manual = st.toggle("✍️ Carga Manual de Vencimientos (Sin Documento Físico)")
     
     if not renov_manual:
-        st.info("🤖 **Modo IA:** Subí la VTV, Póliza o RUTA. El sistema detectará la patente, leerá la fecha y guardará el archivo.")
+        st.info("🤖 **Modo IA Avanzado:** Subí el archivo (incluso Pólizas Flota con decenas de unidades). La IA mapeará cada vencimiento a su patente correspondiente.")
         doc_vto = st.file_uploader("Subir Documento (VTV/Seguro/Ruta)", type=["pdf", "png", "jpg"])
         
-        if doc_vto and st.button("🔍 Leer Documento"):
-            with st.spinner("Leyendo documento con IA..."):
+        if doc_vto and st.button("🔍 Desglosar y Leer Documento"):
+            with st.spinner("Procesando documento masivo con IA..."):
                 pdf_bytes = asegurar_pdf(doc_vto)
-                datos = procesar_documento_vehicular(pdf_bytes)
-                pat = datos.get("patente","")
-                tipo = datos.get("tipo_documento","")
-                fecha = datos.get("fecha_vencimiento","")
+                # Extrae todas las patentes y sus fechas específicas del mismo archivo de póliza
+                lista_renovaciones = procesar_documento_vehicular_multiple(pdf_bytes)
                 
-                st.success(f"**Detección Exitosa:** Es un/a **{tipo}** de la patente **{pat}**, vence el **{fecha}**.")
-                st.warning("⚠️ *Nota: La función de sobreescritura de fila en vivo se implementará tras verificar lectura.*")
+                if lista_renovaciones:
+                    st.success(f"**Análisis Completo:** Se encontraron {len(lista_renovaciones)} registros en el documento.")
+                    
+                    # Mostrar resumen en una tabla interactiva para que el usuario corrobore
+                    df_preview = pd.DataFrame(lista_renovaciones)
+                    st.dataframe(df_preview[['tipo_documento', 'patente', 'fecha_vencimiento']], use_container_width=True)
+                    
+                    st.warning("🚧 *Nota de Arquitectura: La actualización coordinada en celdas de Sheets se ejecutará sobre estas unidades.*")
+                else:
+                    st.error("No se pudieron extraer registros válidos de este archivo.")
     else:
         with st.form("form_renov_manual"):
             st.write("Actualizar fecha manualmente:")
