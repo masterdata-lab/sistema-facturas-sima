@@ -56,15 +56,22 @@ def tablero_principal():
             st.page_link("pages/3_Auditoria.py", label="Ir a Auditar", icon="✅", use_container_width=True)
 
 pg = st.navigation({
-    "🏠 Principal": [st.Page(tablero_principal, title="Tablero de Control", icon="🏢")],
+    "🏠 Principal": [
+        st.Page(tablero_principal, title="Tablero de Control", icon="🏢")
+    ],
     "🧾 Facturación y Reportes": [
         st.Page("pages/1_Facturacion.py", title="Carga Rápida", icon="⚡"),
         st.Page("pages/2_Motor_Procesamiento.py", title="Motor IA", icon="🤖"),
         st.Page("pages/3_Auditoria.py", title="Auditoría Humana", icon="⚖️"),
         st.Page("pages/4_Buscador.py", title="Buscador DPA", icon="🔍")
     ],
+    "🚘 Control de Flota (Manual-First)": [
+        st.Page("pages/5_Flota_Ingestion.py", title="Ingestión y Auditoría", icon="📥"),
+        st.Page("pages/6_Flota_Buscador.py", title="Consulta por Patente", icon="🔍")
+    ],
     "🔧 Maestros y Configuración": [
-        st.Page("pages/5_Flota.py", title="Gestión de Flota", icon="🚘")
+        # Si tenías datos aquí los conservás, o reubicás tu maestro de flota antiguo
+        st.Page("pages/7_Configuracion.py", title="Parámetros Globales", icon="⚙️")
     ]
 })
 pg.run()
