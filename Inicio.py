@@ -67,6 +67,7 @@ pg = st.navigation({
     ],
    "🚘 Control de Flota (Manual-First)": [
         st.Page("pages/5_Flota_Ingestion.py", title="Ingestión de Archivos", icon="📥"),
+        st.Page("pages/6_Motor_Flota.py", title="Motor de Procesamiento Flota", icon="⚙️"),
         st.Page("pages/8_Flota_Auditoria.py", title="Mesa de Auditoría Flota", icon="⚖️"),
         st.Page("pages/6_Flota_Buscador.py", title="Consulta por Patente", icon="🔍")
     ],
