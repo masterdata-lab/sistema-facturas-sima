@@ -6,7 +6,6 @@ import io
 from datetime import datetime
 from utils.conexiones import escribir_fila, subir_archivo, ID_DRIVE_RAIZ
 
-# Buscamos la librería de manipulación de PDFs integrada en el entorno
 try:
     import pypdf
 except ImportError:
@@ -35,13 +34,13 @@ if st.session_state.logs_errores:
 col_ia, col_manual = st.columns([2, 1], gap="medium")
 
 with col_ia:
-    st.subheader("⚡ Carga Asistida en Lote")
+    st.subheader("⚡ Carga Asistida en Lote (Procesamiento IA)")
     archivos_cargados = st.file_uploader(
         "Arrastrá aquí PDFs multipágina, títulos, pólizas o VTV",
         type=["pdf", "png", "jpg"], accept_multiple_files=True, key="uploader_flota"
     )
     
-    if st.button("Procesar y Enviar a Auditoría", use_container_width=True, type="primary"):
+    if st.button("🚀 Enviar Lote al Motor IA de Flota", use_container_width=True, type="primary"):
         if archivos_cargados:
             status_placeholder = st.empty()
             progreso_bar = st.progress(0)
@@ -83,19 +82,11 @@ with col_ia:
                                 nombre_minuscula = nombre_original.lower()
                                 tipo_sugerido = "TITULO" if "titulo" in nombre_minuscula else "CEDULA_VERDE"
                                 
-                                datos_predichos = {
-                                    "patente": "N/A", 
-                                    "tipo_sugerido": tipo_sugerido, 
-                                    "origen": nombre_pagina,
-                                    "titular": "",
-                                    "cuit_cuil": ""
-                                }
-                                
+                                # Entra como PENDIENTE_FLOTA para que lo capture la IA
                                 escribir_fila("PENDIENTES", [
                                     id_carga, fecha_ahora, nombre_pagina, "OPERADOR_FLOTA", 
-                                    link_drive, "N/A", "PARA_AUDITAR_FLOTA", 
-                                    f"Segmento {p_idx+1}/{total_paginas} extraído.", 
-                                    json.dumps(datos_predichos, ensure_ascii=False)
+                                    link_drive, "N/A", "PENDIENTE_FLOTA", 
+                                    tipo_sugerido, ""
                                 ])
                             continue
                     
@@ -113,47 +104,42 @@ with col_ia:
                     elif "vtv" in nombre_minuscula: tipo_sugerido = "VTV"
                     else: tipo_sugerido = "CEDULA_VERDE"
                         
-                    datos_predichos = {
-                        "patente": "N/A", "tipo_sugerido": tipo_sugerido, "origen": nombre_original, "titular": "", "cuit_cuil": ""
-                    }
-                    
                     escribir_fila("PENDIENTES", [
                         id_carga, fecha_ahora, nombre_original, "OPERADOR_FLOTA", 
-                        link_drive, "N/A", "PARA_AUDITAR_FLOTA", 
-                        "Listo para auditoría.", 
-                        json.dumps(datos_predichos, ensure_ascii=False)
+                        link_drive, "N/A", "PENDIENTE_FLOTA", 
+                        tipo_sugerido, ""
                     ])
                     
                 except Exception as e:
                     st.session_state.logs_errores.append(f"❌ Error en {archivo.name}: {str(e)}")
             
-            status_placeholder.success("🎉 Carga y división completada exitosamente.")
+            status_placeholder.success("🎉 Lote enviado a la cola de procesamiento del Motor IA.")
             time.sleep(1.2)
             st.rerun()
 
 with col_manual:
-    st.subheader("✍️ Carga Manual Directa")
+    st.subheader("✍️ Carga Manual Directa (Saltea IA)")
     with st.form("form_alta_directa", clear_on_submit=True):
         patente_m = st.text_input("Patente (Provisoria)").upper().strip()
         tipo_m = st.selectbox("Tipo Documento", ["TITULO", "CEDULA_VERDE", "CERTIFICADO_SEGURO", "VTV", "YPF"])
         archivo_m = st.file_uploader("Archivo", type=["pdf", "png", "jpg"])
         
-        if st.form_submit_button("📥 Enviar a Control", use_container_width=True):
+        if st.form_submit_button("📥 Enviar a Auditoría", use_container_width=True):
             if archivo_m:
                 try:
                     id_carga_m = f"FLOTA_{uuid.uuid4().hex[:8].upper()}"
                     fecha_ahora_m = datetime.now().strftime("%d/%m/%Y %H:%M:%S")
-                    
                     link_drive_m = subir_archivo(f"MANUAL_{id_carga_m}_{archivo_m.name}", archivo_m.getvalue(), ID_DRIVE_RAIZ)
                     
-                    datos_m = {"patente": patente_m if patente_m else "N/A", "tipo_sugerido": tipo_m, "origen": archivo_m.name}
+                    # La carga manual SI va directo a la auditoría porque no requiere IA
+                    datos_m = {"patente": patente_m if patente_m else "N/A", "tipo_sugerido": tipo_m, "titular": "", "cuit_cuil": "", "marca_modelo": "", "anio": "", "nro_chasis": "", "nro_motor": ""}
                     
                     escribir_fila("PENDIENTES", [
                         id_carga_m, fecha_ahora_m, archivo_m.name, "MANUAL", 
                         link_drive_m, "N/A", "PARA_AUDITAR_FLOTA", 
                         "Carga manual.", json.dumps(datos_m, ensure_ascii=False)
                     ])
-                    st.success("Enviado a revisión.")
+                    st.success("Enviado a revisión humana.")
                     time.sleep(0.8)
                     st.rerun()
                 except Exception as e:
