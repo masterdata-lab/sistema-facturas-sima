@@ -131,9 +131,10 @@ with tab_alta:
                         escribir_fila("FLOTA", fila)
                         status_panel.write(f"✅ Procesado unitario: **{patente}**")
                 
-                else:
+   else:
                     reader = pypdf.PdfReader(arch)
-                    total_paginas = len(reader)
+                    # CORRECCIÓN AQUÍ: Usamos reader.pages para obtener el total
+                    total_paginas = len(reader.pages)
                     status_panel.write(f"📄 El archivo contiene {total_paginas} páginas. Procesando una por una...")
                     
                     for idx in range(total_paginas):
@@ -146,8 +147,7 @@ with tab_alta:
                         page_bytes = page_io.getvalue()
                         
                         datos = procesar_pagina_individual_con_ia(page_bytes)
-                        patente = str(datos.get("patente","")).upper().replace("-","").replace(" ","")
-                        
+                        patente = str(datos.get("patente","")).upper().replace("-","").replace(" ","")                     
                         if patente:
                             link = subir_archivo(f"TITULO_{patente}.pdf", page_bytes, ID_DRIVE_RAIZ, "FLOTA")
                             
@@ -181,11 +181,11 @@ with tab_renovacion:
         
         resultados_tabla = []
         
-        try:
+     try:
             reader = pypdf.PdfReader(archivo_masivo)
-            total_pag = len(reader)
+            # CORRECCIÓN AQUÍ TAMBIÉN
+            total_pag = len(reader.pages)
             status_renov.write(f"Análisis local: Detectadas {total_pag} páginas a auditar.")
-            
             for idx in range(total_pag):
                 status_renov.write(f"Procesando extracto {idx + 1} de {total_pag}...")
                 
