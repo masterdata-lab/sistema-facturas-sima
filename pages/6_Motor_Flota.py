@@ -5,7 +5,6 @@ import re
 import concurrent.futures
 from google.genai import types
 
-# 🔌 Importamos las conexiones de tu ecosistema real
 from utils.conexiones import (
     obtener_cliente_gemini, 
     leer_hoja_completa, 
@@ -18,7 +17,6 @@ st.set_page_config(page_title="Motor de Extracción - Flota", page_icon="🧠", 
 st.title("🧠 Motor de Extracción Cognitiva Real (Flota)")
 st.markdown("---")
 
-# 1. Conexión Real 
 try:
     HOJA_FLOTA = st.secrets.get("HOJA_FLOTA", "PENDIENTES_FLOTA") 
     ia_client = obtener_cliente_gemini()
@@ -33,12 +31,12 @@ def extraer_id_drive(url_drive):
 
 col_opts_1, col_opts_2 = st.columns(2)
 with col_opts_1:
-    st.info("🧠 Enrutador de IA Activo: 3.5-Flash ➡️ Failover a 3.1-Flash-Lite")
+    # Mensaje actualizado a la nueva prioridad
+    st.info("🧠 Enrutador de IA Activo: 3.1-Flash-Lite ➡️ Failover a 3.5-Flash")
 with col_opts_2:
     reprocesar_errores = st.checkbox("🔄 Intentar reprocesar registros con error", value=True)
     loop_activo = st.checkbox("🔄 Modo Loop Automático (Procesar cada 60 seg)", value=False)
 
-# 2. IA Blindada CON ENRUTADOR DE EMERGENCIA (FAILOVER)
 def procesar_documento_flota_ia(pdf_bytes, tipo_sugerido, status_text_ui, contexto_ui):
     plantilla_prompt = """
     Actúa como un auditor experto en documentación automotriz de Argentina. Analiza el documento proporcionado.
@@ -66,14 +64,11 @@ def procesar_documento_flota_ia(pdf_bytes, tipo_sugerido, status_text_ui, contex
         "nro_motor": "Número de motor completo"
     }
     """
-    # IMPORTANTE: También debes borrar esta línea que estaba justo debajo de la plantilla:
-    # prompt = plantilla_prompt.replace("TIPO_DOCUMENTO", str(tipo_sugerido)) 
-    # Y reemplazarla simplemente por:
     prompt = plantilla_prompt
     doc = types.Part.from_bytes(data=pdf_bytes, mime_type="application/pdf")
     
-    # Lista de modelos en orden de prioridad
-    modelos_disponibles = ["gemini-3.5-flash", "gemini-3.1-flash-lite"]
+    # NUEVO ORDEN DE PRIORIDAD
+    modelos_disponibles = ["gemini-3.1-flash-lite", "gemini-3.5-flash"]
     max_intentos_por_modelo = 2
     
     for modelo in modelos_disponibles:
@@ -115,24 +110,16 @@ def procesar_documento_flota_ia(pdf_bytes, tipo_sugerido, status_text_ui, contex
                             time.sleep(1)
                         continue
                     else:
-                        status_text_ui.error(f"⚠️ {modelo} sigue saturado. Activando enrutador a modelo Lite...")
+                        status_text_ui.error(f"⚠️ {modelo} sigue saturado. Activando enrutador a modelo secundario...")
                         time.sleep(1.5)
                 else:
-                    # Si es otro error (ej: PDF corrupto), lo lanza directamente sin probar el otro modelo
                     raise e
 
-    # Si sale del bucle, es porque fallaron AMBOS modelos
-    raise Exception("TIMEOUT_GLOBAL: Ambos modelos (Flash y Lite) se encuentran saturados. Intente más tarde.")
+    raise Exception("TIMEOUT_GLOBAL: Ambos modelos se encuentran saturados. Intente más tarde.")
 
-# --- 🎯 MAPEO DE COLUMNAS 🎯 ---
-COL_ID = 0         
-COL_ARCHIVO = 2    
-COL_TIPO = 3       
-COL_LINK = 4       
-COL_ESTADO = 6     
+COL_ID, COL_ARCHIVO, COL_TIPO, COL_LINK, COL_ESTADO = 0, 2, 3, 4, 6     
 
 st.markdown("---")
-# --- BOTONES DE CONTROL ---
 col_btn1, col_btn2 = st.columns([1, 4])
 with col_btn1:
     btn_iniciar = st.button("▶️ Iniciar Procesamiento", type="primary", disabled=loop_activo)
@@ -147,7 +134,7 @@ if btn_iniciar or loop_activo:
         try:
             datos_cola = leer_hoja_completa(HOJA_FLOTA)
         except Exception as e:
-            st.error(f"No se pudo leer la hoja. Asegurate de que '{HOJA_FLOTA}' existe. Error: {e}")
+            st.error(f"No se pudo leer la hoja. Error: {e}")
             st.stop()
     
     pendientes = []
@@ -163,8 +150,7 @@ if btn_iniciar or loop_activo:
         st.success(f"🚀 Encontrados {len(pendientes)} documentos en cola.")
         barra_general = st.progress(0)
         status_text = st.empty()
-        exitos = 0
-        fallas = 0
+        exitos, fallas = 0, 0
         
         for i, fila in enumerate(pendientes):
             id_carga = fila[COL_ID]
@@ -175,26 +161,20 @@ if btn_iniciar or loop_activo:
             
             try:
                 id_drive = extraer_id_drive(link_drive)
-                if not id_drive:
-                    raise Exception("El link de Drive está vacío o es inválido.")
+                if not id_drive: raise Exception("Link Drive vacío/inválido.")
                     
                 status_text.markdown(f"⏳ **{contexto}** | Descargando PDF de Drive...")
                 pdf_bytes = descargar_archivo(id_drive)
-                if not pdf_bytes:
-                    raise Exception("No se pudo descargar el archivo desde Google Drive.")
+                if not pdf_bytes: raise Exception("Error al descargar el archivo.")
                     
-                # Ya no le pasamos modelo_ia porque la función lo maneja internamente
-                resultado_json = procesar_documento_flota_ia(
-                    pdf_bytes, tipo_doc, status_text, contexto
-                )
+                resultado_json = procesar_documento_flota_ia(pdf_bytes, tipo_doc, status_text, contexto)
                 
                 json_str = json.dumps(resultado_json, ensure_ascii=False)
                 actualizar_estado_carga(HOJA_FLOTA, id_carga, "PROCESADO", json_str)
                 exitos += 1
                 
             except Exception as e:
-                error_msg = str(e)[:150]
-                actualizar_estado_carga(HOJA_FLOTA, id_carga, f"ERROR_IA_FLOTA: {error_msg}")
+                actualizar_estado_carga(HOJA_FLOTA, id_carga, f"ERROR_IA_FLOTA: {str(e)[:150]}")
                 fallas += 1
                 
             barra_general.progress((i + 1) / len(pendientes))
@@ -205,14 +185,13 @@ if btn_iniciar or loop_activo:
         col_r1, col_r2 = st.columns(2)
         col_r1.metric("✅ Procesados con Éxito", exitos)
         col_r2.metric("⚠️ Fallas Registradas", fallas)
-        if fallas == 0: 
-            st.balloons()
+        if fallas == 0: st.balloons()
 
     if loop_activo:
         st.write("---")
         reloj = st.empty()
         for i in range(60, 0, -1):
-            reloj.info(f"⏱️ Próximo escaneo automático en: **{i} segundos**... (Usá el botón ⏹️ Detener para cancelar)")
+            reloj.info(f"⏱️ Próximo escaneo en: **{i} segundos**... (Usá el botón ⏹️ Detener para cancelar)")
             time.sleep(1)
         st.rerun()
 
