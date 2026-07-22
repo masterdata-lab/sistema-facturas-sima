@@ -144,3 +144,43 @@ def actualizar_estado_carga(hoja_nombre, id_carga, nuevo_estado, json_extraido=N
         "nuevoEstado": nuevo_estado,
         "jsonExtraido": json_extraido
     })
+
+# ---------------------------------------------------------
+# NUEVAS FUNCIONES PARA EL BACKEND DE AUDITORÍA FLOTA
+# ---------------------------------------------------------
+
+def extraer_id_drive(url_drive):
+    """Extrae el ID real de Google Drive a partir de un link completo"""
+    if not url_drive or url_drive == "N/A": return None
+    match = re.search(r'(?:/d/|id=)([a-zA-Z0-9_-]+)', str(url_drive))
+    return match.group(1) if match else None
+
+def mover_y_renombrar_archivo(file_id, carpeta_destino_id, nuevo_nombre):
+    """Mueve un archivo a su carpeta definitiva y lo renombra (Requiere actualizar Apps Script)"""
+    res = llamar_puente({
+        "accion": "mover_y_renombrar_archivo",
+        "fileId": file_id,
+        "folderId": carpeta_destino_id,
+        "nuevoNombre": nuevo_nombre
+    })
+    return res.get("link", f"https://drive.google.com/file/d/{file_id}/view")
+
+def actualizar_fila(hoja_nombre, columna_clave, valor_clave, nuevos_datos):
+    """Busca una fila por un valor clave (Ej: Patente) y actualiza columnas específicas"""
+    llamar_puente({
+        "accion": "actualizar_fila",
+        "sheetId": ID_GSHEET,
+        "hojaNombre": hoja_nombre,
+        "columnaClave": columna_clave,
+        "valorClave": valor_clave,
+        "nuevosDatos": nuevos_datos
+    })
+
+def eliminar_fila(hoja_nombre, id_carga):
+    """Elimina una fila específica de la bandeja de pendientes una vez aprobada"""
+    llamar_puente({
+        "accion": "eliminar_fila",
+        "sheetId": ID_GSHEET,
+        "hojaNombre": hoja_nombre,
+        "idCarga": id_carga
+    })
