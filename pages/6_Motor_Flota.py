@@ -51,16 +51,23 @@ with col_opts_2:
     loop_activo = st.checkbox("🔄 Modo Loop Automático (Procesar cada 60 seg)", value=False)
 
 def procesar_documento_flota_ia(pdf_bytes, tipo_sugerido, status_text_ui, contexto_ui):
+    # 🌟 ACÁ INYECTAMOS EL NUEVO PROMPT ESTRICTO
     plantilla_prompt = """
-    Actúa como un auditor experto en documentación automotriz de Argentina. Analiza TODO el documento proporcionado.
+    Actúa como un auditor experto en seguros de flota automotor de Argentina. Tu tarea es analizar TODO el documento proporcionado y extraer exclusivamente los Certificados de Cobertura individuales o datos específicos del vehículo.
+
+    REGLAS ESTRICTAS DE EXTRACCIÓN:
+    1. IGNORAR BASURA: Ignora por completo las páginas que contengan "Condiciones Generales", "Anexo de Cobranza", "Índice", "Cláusulas", "Frente de Póliza General" o texto legal continuo.
+    2. IDENTIFICAR CERTIFICADOS: Una página SOLO es un certificado individual válido si contiene un Dominio/Patente de un vehículo.
+    3. FORMATO DE PATENTE: Busca únicamente patentes argentinas en formato AAA111 o AA111AA (ej. AE896KP, OUI123).
+    4. RESTRICCIÓN DE PÁGINAS: Si una página no menciona explícitamente un Dominio/Patente, DEBE SER DESCARTADA automáticamente. No la incluyas en los resultados.
     
     SI EL DOCUMENTO TIENE MÚLTIPLES VEHÍCULOS (Ej: Una póliza general de flota):
-    Encuentra CADA vehículo asegurado. Extrae su patente y EN QUÉ NÚMERO DE PÁGINA (del PDF) se encuentra su certificado.
+    Encuentra CADA vehículo asegurado aplicando las reglas de arriba. Extrae su patente y EN QUÉ NÚMERO DE PÁGINA EXACTO (del PDF) se encuentra su certificado válido.
     
     SI EL DOCUMENTO ES DE UN SOLO VEHÍCULO (Ej: Cédula, VTV, Título individual):
     Extrae los datos de ese único vehículo e indica página 1.
     
-    Devuelve estrictamente un JSON con este formato (y NADA MÁS que el JSON).
+    Devuelve estrictamente un JSON con este formato (y NADA MÁS que el JSON):
     {
         "es_multiple": true_o_false,
         "vehiculos": [
@@ -69,7 +76,7 @@ def procesar_documento_flota_ia(pdf_bytes, tipo_sugerido, status_text_ui, contex
                 "tipo_sugerido": "CERTIFICADO_SEGURO", 
                 "pagina_pdf": 1,
                 "vencimiento": "DD/MM/YYYY o S/D",
-                "marca_modelo": "Solo si está disponible"
+                "marca_modelo": "Solo si está disponible o S/D"
             }
         ]
     }
@@ -157,7 +164,7 @@ if btn_iniciar or loop_activo:
                             output_buffer = io.BytesIO()
                             pdf_writer.write(output_buffer)
                             
-                            # Subimos el recocido de 1 página
+                            # Subimos el recorte de 1 página
                             nuevo_id = f"CERT_{uuid.uuid4().hex[:6].upper()}"
                             link_cortado = subir_archivo(f"TEMP_{patente}_CERT.pdf", output_buffer.getvalue(), ID_DRIVE_RAIZ)
                             
