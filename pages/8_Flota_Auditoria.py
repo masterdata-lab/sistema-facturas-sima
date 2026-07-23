@@ -16,9 +16,6 @@ HOJA_PENDIENTES = st.secrets.get("HOJA_PENDIENTES_FLOTA", "PENDIENTES_FLOTA")
 HOJA_FLOTA = st.secrets.get("HOJA_FLOTA", "FLOTA")
 MOTOR_IA = st.secrets.get("MODELO_PRIMARIO", "Gemini")
 
-CARPETA_CERTIFICADOS = st.secrets.get("ID_CARPETA_CERTIFICADOS", "ID_SIMULADO")
-CARPETA_POLIZAS_MADRE = st.secrets.get("ID_CARPETA_POLIZAS_MADRE", "ID_SIMULADO")
-
 # Inicializamos el estado de la selección para el "Árbol"
 if "audit_sel" not in st.session_state: st.session_state.audit_sel = []
 if "audit_prev" not in st.session_state: st.session_state.audit_prev = None
@@ -200,7 +197,7 @@ with col_auditoria:
                 try:
                     nuevo_nombre = f"{patente_corregida}_{tipo_corregido}.pdf"
                     id_drive_temp = extraer_id_drive(fila_actual["LINK_TEMP"])
-                    link_definitivo = mover_y_renombrar_archivo(id_drive_temp, CARPETA_CERTIFICADOS, nuevo_nombre)
+                    link_definitivo = mover_y_renombrar_archivo(id_drive_temp, ID_DRIVE_RAIZ, nuevo_nombre)
                     
                     if tipo_corregido != "POLIZA_MADRE":
                         columna_destino = "LINK_CERTIFICADO_SEGURO"
@@ -244,7 +241,7 @@ with col_auditoria:
                         
                         nuevo_nombre = f"{patente}_{tipo_doc}.pdf"
                         id_drive_temp = extraer_id_drive(fila_lote["LINK_TEMP"])
-                        link_definitivo = mover_y_renombrar_archivo(id_drive_temp, CARPETA_CERTIFICADOS, nuevo_nombre)
+                        link_definitivo = mover_y_renombrar_archivo(id_drive_temp, ID_DRIVE_RAIZ, nuevo_nombre)
                         
                         if tipo_doc != "POLIZA_MADRE":
                             columna_destino = "LINK_CERTIFICADO_SEGURO"
