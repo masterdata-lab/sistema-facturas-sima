@@ -51,31 +51,32 @@ with col_opts_2:
     loop_activo = st.checkbox("🔄 Modo Loop Automático (Procesar cada 60 seg)", value=False)
 
 def procesar_documento_flota_ia(pdf_bytes, tipo_sugerido, status_text_ui, contexto_ui):
-    # 🌟 ACÁ INYECTAMOS EL NUEVO PROMPT ESTRICTO
     plantilla_prompt = """
-    Actúa como un auditor experto en seguros de flota automotor de Argentina. Tu tarea es analizar TODO el documento proporcionado y extraer exclusivamente los Certificados de Cobertura individuales o datos específicos del vehículo.
+    Actúa como un auditor experto en seguros de flota automotor de Argentina. Tu tarea es analizar TODO el documento proporcionado y extraer la información clave.
 
     REGLAS ESTRICTAS DE EXTRACCIÓN:
-    1. IGNORAR BASURA: Ignora por completo las páginas que contengan "Condiciones Generales", "Anexo de Cobranza", "Índice", "Cláusulas", "Frente de Póliza General" o texto legal continuo.
+    1. IGNORAR BASURA: Ignora las páginas de "Condiciones Generales", "Índice", o texto legal continuo al buscar vehículos, PERO utiliza las primeras páginas (Frente de Póliza) para extraer los DATOS GENERALES (Asegurado, CUIT, N° Póliza, Vigencia).
     2. IDENTIFICAR CERTIFICADOS: Una página SOLO es un certificado individual válido si contiene un Dominio/Patente de un vehículo.
-    3. FORMATO DE PATENTE: Busca únicamente patentes argentinas en formato AAA111 o AA111AA (ej. AE896KP, OUI123).
-    4. RESTRICCIÓN DE PÁGINAS: Si una página no menciona explícitamente un Dominio/Patente, DEBE SER DESCARTADA automáticamente. No la incluyas en los resultados.
-    
-    SI EL DOCUMENTO TIENE MÚLTIPLES VEHÍCULOS (Ej: Una póliza general de flota):
-    Encuentra CADA vehículo asegurado aplicando las reglas de arriba. Extrae su patente y EN QUÉ NÚMERO DE PÁGINA EXACTO (del PDF) se encuentra su certificado válido.
-    
-    SI EL DOCUMENTO ES DE UN SOLO VEHÍCULO (Ej: Cédula, VTV, Título individual):
-    Extrae los datos de ese único vehículo e indica página 1.
+    3. FORMATO DE PATENTE: Busca únicamente patentes argentinas (ej. AE896KP, OUI123).
+    4. RESTRICCIÓN DE PÁGINAS: Si una página no menciona explícitamente un Dominio/Patente, no la incluyas en la lista de vehículos.
+    5. NORMALIZACIÓN DE FECHAS: Todas las fechas (vigencias, vencimientos) DEBEN convertirse obligatoriamente al formato estricto DD/MM/AAAA (ejemplo: si dice "12 Ago 26", debes devolver "12/08/2026"). Si no hay fecha, devuelve "S/D".
     
     Devuelve estrictamente un JSON con este formato (y NADA MÁS que el JSON):
     {
         "es_multiple": true_o_false,
+        "datos_generales": {
+            "asegurado": "Razón social o S/D",
+            "cuit": "Número de CUIT o S/D",
+            "num_poliza": "Número de póliza o S/D",
+            "vigencia_desde": "DD/MM/AAAA o S/D",
+            "vigencia_hasta": "DD/MM/AAAA o S/D"
+        },
         "vehiculos": [
             {
                 "patente": "Patente sin espacios",
                 "tipo_sugerido": "CERTIFICADO_SEGURO", 
                 "pagina_pdf": 1,
-                "vencimiento": "DD/MM/YYYY o S/D",
+                "vencimiento": "DD/MM/AAAA o S/D",
                 "marca_modelo": "Solo si está disponible o S/D"
             }
         ]
@@ -96,7 +97,7 @@ def procesar_documento_flota_ia(pdf_bytes, tipo_sugerido, status_text_ui, contex
                         contents=[doc, plantilla_prompt],
                         config=types.GenerateContentConfig(response_mime_type="application/json")
                     )
-                    resp = future.result(timeout=60) # Tiempo un poco más largo para PDFs grandes
+                    resp = future.result(timeout=60)
                     
                 texto_limpio = resp.text.strip()
                 if texto_limpio.startswith("```"): texto_limpio = texto_limpio.split("\n", 1)[1]
@@ -146,16 +147,14 @@ if btn_iniciar or loop_activo:
                 status_text.markdown(f"⏳ **{contexto}** | Descargando PDF...")
                 pdf_bytes = descargar_archivo(id_drive)
                 
-                # 1. IA analiza el PDF (entero)
                 resultado_ia = procesar_documento_flota_ia(pdf_bytes, tipo_doc, status_text, contexto)
                 
-                # 2. Si es Póliza Madre y tiene múltiples vehículos, Python recorta físicamente las páginas.
                 if resultado_ia.get("es_multiple") and tipo_doc == "POLIZA_MADRE":
                     status_text.markdown(f"✂️ **{contexto}** | Cortando y subiendo certificados individuales...")
                     pdf_reader = pypdf.PdfReader(io.BytesIO(pdf_bytes))
                     
                     for vehiculo in resultado_ia.get("vehiculos", []):
-                        pag_num = int(vehiculo.get("pagina_pdf", 1)) - 1 # PyPDF2 usa índice 0
+                        pag_num = int(vehiculo.get("pagina_pdf", 1)) - 1 
                         patente = vehiculo.get("patente", "S_D")
                         
                         if 0 <= pag_num < len(pdf_reader.pages):
@@ -164,20 +163,18 @@ if btn_iniciar or loop_activo:
                             output_buffer = io.BytesIO()
                             pdf_writer.write(output_buffer)
                             
-                            # Subimos el recorte de 1 página
                             nuevo_id = f"CERT_{uuid.uuid4().hex[:6].upper()}"
                             link_cortado = subir_archivo(f"TEMP_{patente}_CERT.pdf", output_buffer.getvalue(), ID_DRIVE_RAIZ)
                             
-                            # Agregamos una nueva fila por CADA auto encontrado
                             escribir_fila(HOJA_FLOTA, [
                                 nuevo_id, fila[COL_FECHA], f"Recorte_{patente}.pdf", "IA_MOTOR", 
                                 link_cortado, link_drive_original, "PROCESADO", "CERTIFICADO_SEGURO", json.dumps(vehiculo)
                             ])
                             
-                    # Marcamos la Póliza Madre general original como procesada pero oculta (ya la desglosamos)
-                    actualizar_estado_carga(HOJA_FLOTA, id_carga, "PROCESADO_DESGLOSADO", json.dumps({"notas": "Desglosada en certificados individuales."}))
+                    datos_madre = resultado_ia.get("datos_generales", {})
+                    datos_madre["notas"] = "Desglosada en certificados individuales."
+                    actualizar_estado_carga(HOJA_FLOTA, id_carga, "PROCESADO_DESGLOSADO", json.dumps(datos_madre))
                 else:
-                    # Es un archivo individual de un solo auto (Ej. cédula)
                     vehiculo = resultado_ia.get("vehiculos", [{}])[0]
                     actualizar_estado_carga(HOJA_FLOTA, id_carga, "PROCESADO", json.dumps(vehiculo))
                 
