@@ -14,9 +14,7 @@ st.set_page_config(page_title="Auditoría de Flota", page_icon="⚖️", layout=
 
 HOJA_PENDIENTES = st.secrets.get("HOJA_PENDIENTES_FLOTA", "PENDIENTES_FLOTA")
 HOJA_FLOTA = st.secrets.get("HOJA_FLOTA", "FLOTA")
-MOTOR_IA = st.secrets.get("MODELO_PRIMARIO", "Gemini")
 
-# Inicializamos el estado de la selección para el "Árbol"
 if "audit_sel" not in st.session_state: st.session_state.audit_sel = []
 if "audit_prev" not in st.session_state: st.session_state.audit_prev = None
 
@@ -31,7 +29,6 @@ st.markdown('''
 ''', unsafe_allow_html=True)
 
 st.title("⚖️ Auditoría de Documentos (Flota)")
-st.markdown(f"**Bandeja:** `{HOJA_PENDIENTES}` | Menú de árbol: Seleccioná lotes completos o revisá uno por uno.")
 st.divider()
 
 with st.spinner("Buscando documentos procesados..."):
@@ -46,7 +43,6 @@ for fila in datos_cola[1:]:
     estado = str(fila[6]).strip().upper()
     tipo = str(fila[7]).strip().upper()
     
-    # Traemos los individuales procesados y también las Pólizas Madre que la IA ya desglosó
     if (estado == "PROCESADO") or (estado == "PROCESADO_DESGLOSADO" and tipo == "POLIZA_MADRE"):
         try:
             datos_ia = json.loads(fila[8]) if len(fila) > 8 and fila[8] else {}
@@ -61,7 +57,8 @@ for fila in datos_cola[1:]:
                 "LINK_TEMP": fila[4],
                 "LINK_MADRE": link_madre,
                 "ID_MADRE_GRUPO": id_madre,
-                "ESTADO": estado
+                "ESTADO": estado,
+                "DATOS_IA": datos_ia
             })
         except Exception:
             pass
@@ -72,13 +69,11 @@ if not lote_auditar:
 
 df_lote = pd.DataFrame(lote_auditar)
 
-# 🌟 LAYOUT EN 3 COLUMNAS: Árbol (25%) - Visor (50%) - Auditoría (25%)
 col_arbol, col_visor, col_auditoria = st.columns([1.2, 2.2, 1.2], gap="large")
 
 with col_arbol:
     st.markdown("### 📂 Bandeja de Entrada")
     
-    # --- GRUPO 1: SEGUROS (Madres y Certificados) ---
     st.markdown("#### 🛡️ SEGUROS")
     df_seguros = df_lote[df_lote["TIPO_DOC"].isin(["POLIZA_MADRE", "CERTIFICADO_SEGURO"])]
     
@@ -103,14 +98,11 @@ with col_arbol:
         grupos_cert = certificados.groupby("ID_MADRE_GRUPO")
         for id_grupo, grupo in grupos_cert:
             nombre_lote = f"PÓLIZA {id_grupo[:8]}" if id_grupo != "INDEPENDIENTE" else "SIN AGRUPAR"
-            
-            # Botón del Lote Padre
             if st.button(f"📁 LOTE: {nombre_lote} ({len(grupo)} docs)", key=f"btn_lote_{id_grupo}"):
                 st.session_state.audit_sel = grupo["ID_CARGA"].tolist()
                 st.session_state.audit_prev = grupo.iloc[0]["ID_CARGA"]
                 st.rerun()
                 
-            # Botones de los Hijos (Patentes)
             for _, row in grupo.iterrows():
                 c_espacio, c_btn = st.columns([0.15, 0.85])
                 with c_btn:
@@ -120,7 +112,6 @@ with col_arbol:
                         st.session_state.audit_prev = row["ID_CARGA"]
                         st.rerun()
 
-    # --- GRUPO 2: OTROS DOCUMENTOS (VTV, Cédulas, etc.) ---
     st.write("---")
     st.markdown("#### 🟩 OTROS DOCUMENTOS")
     df_otros = df_lote[~df_lote["TIPO_DOC"].isin(["POLIZA_MADRE", "CERTIFICADO_SEGURO"])]
@@ -148,17 +139,14 @@ with col_visor:
     st.markdown("### 👁️ Visor de Documento")
     if st.session_state.audit_prev:
         try:
-            # Buscamos el documento actual en el DataFrame
             fila_visor = df_lote[df_lote["ID_CARGA"] == st.session_state.audit_prev].iloc[0]
             link_visor = fila_visor["LINK_TEMP"]
-            pat_visor = fila_visor["PATENTE"]
-            tipo_visor = fila_visor["TIPO_DOC"]
             
-            st.info(f"**Viendo ahora:** `{pat_visor}` | **Documento:** `{tipo_visor}`")
+            st.info(f"**Documento:** `{fila_visor['TIPO_DOC']}`")
             
             id_drive = extraer_id_drive(link_visor)
             if id_drive:
-                url_visor = f"https://drive.google.com/file/d/{id_drive}/preview"
+                url_visor = f"[https://drive.google.com/file/d/](https://drive.google.com/file/d/){id_drive}/preview"
                 st.components.v1.iframe(url_visor, height=700)
             else:
                 st.warning("Link de Drive inválido.")
@@ -166,7 +154,7 @@ with col_visor:
             st.warning("El documento seleccionado ya fue procesado.")
             st.session_state.audit_prev = None
     else:
-        st.info("👈 Hacé clic en un documento o lote del menú izquierdo para visualizarlo.")
+        st.info("👈 Hacé clic en un documento del menú izquierdo para visualizarlo.")
 
 with col_auditoria:
     st.markdown("### 🛠️ Mesa de Trabajo")
@@ -177,23 +165,26 @@ with col_auditoria:
         st.warning("Esperando selección desde el árbol...")
         
     elif cant_sel == 1:
-        # MODO INDIVIDUAL
         id_actual = st.session_state.audit_sel[0]
         fila_actual = df_lote[df_lote["ID_CARGA"] == id_actual].iloc[0]
         tipo_actual = fila_actual["TIPO_DOC"]
+        datos_ia = fila_actual["DATOS_IA"]
         
         st.markdown(f"**Control Individual: {tipo_actual.replace('_', ' ')}**")
         st.write("Corregí o completá los datos antes de guardar:")
         
-        # --- FORMULARIO DINÁMICO SEGÚN TIPO DE DOCUMENTO ---
         if tipo_actual == "POLIZA_MADRE":
-            asegurado = st.text_input("Razón Social / Asegurado").strip()
-            cuit = st.text_input("CUIT").strip()
-            num_poliza = st.text_input("Número de Póliza").strip()
+            asegurado = st.text_input("Razón Social / Asegurado", value=datos_ia.get("asegurado", "")).strip()
+            cuit = st.text_input("CUIT", value=datos_ia.get("cuit", "")).strip()
+            num_poliza = st.text_input("Número de Póliza", value=datos_ia.get("num_poliza", "")).strip()
+            
+            vig_d = datos_ia.get("vigencia_desde", "")
+            vig_h = datos_ia.get("vigencia_hasta", "")
             
             c1, c2 = st.columns(2)
-            with c1: vigencia_desde = st.date_input("Vigencia Desde")
-            with c2: vigencia_hasta = st.date_input("Vigencia Hasta")
+            with c1: vigencia_desde = st.text_input("Vigencia Desde", value=vig_d)
+            with c2: vigencia_hasta = st.text_input("Vigencia Hasta", value=vig_h)
+            
             tipo_corregido = "POLIZA_MADRE"
             nuevo_nombre = f"POLIZA_{num_poliza if num_poliza else 'SD'}.pdf"
             
@@ -211,16 +202,7 @@ with col_auditoria:
                     id_drive_temp = extraer_id_drive(fila_actual["LINK_TEMP"])
                     link_definitivo = mover_y_renombrar_archivo(id_drive_temp, ID_DRIVE_RAIZ, nuevo_nombre)
                     
-                    if tipo_corregido == "POLIZA_MADRE":
-                        # Acá podés decidir en qué hoja guardar los datos generales de la póliza
-                        # Por ahora actualizamos en PENDIENTES o en una hoja maestra si la tenés.
-                        nuevos_datos = {
-                            "ASEGURADO": asegurado, "CUIT": cuit, "POLIZA": num_poliza, 
-                            "VIGENCIA_DESDE": str(vigencia_desde), "VIGENCIA_HASTA": str(vigencia_hasta),
-                            "LINK_DEF": link_definitivo
-                        }
-                        # Ejemplo: actualizar_fila("HOJA_POLIZAS", "POLIZA", num_poliza, nuevos_datos)
-                    else:
+                    if tipo_corregido != "POLIZA_MADRE":
                         columna_destino = "LINK_CERTIFICADO_SEGURO"
                         if tipo_corregido == "TITULO": columna_destino = "LINK_TITULO"
                         elif tipo_corregido == "VTV": columna_destino = "LINK_VTV"
@@ -241,3 +223,42 @@ with col_auditoria:
             st.session_state.audit_sel = []
             st.session_state.audit_prev = None
             st.rerun()
+
+    else:
+        st.markdown("**Aprobación Masiva**")
+        st.info(f"Seleccionaste un lote de **{cant_sel} documentos**.")
+        
+        if st.button(f"🚀 Aprobar Lote Completo", type="primary", use_container_width=True):
+            with st.status(f"Procesando {cant_sel} archivos...", expanded=True) as status:
+                exitos = 0
+                for id_carga in st.session_state.audit_sel:
+                    try:
+                        fila_lote = df_lote[df_lote["ID_CARGA"] == id_carga].iloc[0]
+                        patente = fila_lote["PATENTE"]
+                        tipo_doc = fila_lote["TIPO_DOC"]
+                        
+                        status.write(f"🔄 Ruteando {patente}...")
+                        
+                        nuevo_nombre = f"{patente}_{tipo_doc}.pdf"
+                        id_drive_temp = extraer_id_drive(fila_lote["LINK_TEMP"])
+                        link_definitivo = mover_y_renombrar_archivo(id_drive_temp, ID_DRIVE_RAIZ, nuevo_nombre)
+                        
+                        if tipo_doc != "POLIZA_MADRE":
+                            columna_destino = "LINK_CERTIFICADO_SEGURO"
+                            if tipo_doc == "TITULO": columna_destino = "LINK_TITULO"
+                            elif tipo_doc == "VTV": columna_destino = "LINK_VTV"
+                            elif tipo_doc == "CEDULA_VERDE": columna_destino = "LINK_CEDULA"
+                                
+                            actualizar_fila(HOJA_FLOTA, "PATENTE", patente, {columna_destino: link_definitivo})
+                            
+                        eliminar_fila(HOJA_PENDIENTES, id_carga)
+                        exitos += 1
+                    except Exception as e:
+                        status.write(f"❌ Error con {patente}: {str(e)}")
+                
+                status.update(label=f"¡Lote finalizado! ({exitos}/{cant_sel})", state="complete")
+                
+            if exitos > 0:
+                st.session_state.audit_sel = []
+                st.session_state.audit_prev = None
+                st.rerun()
