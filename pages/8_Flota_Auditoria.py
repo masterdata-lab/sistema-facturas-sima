@@ -38,29 +38,29 @@ st.divider()
 
 with st.spinner("Buscando documentos procesados..."):
     try:
-        datos_cola = leer_hoja_completa(HOJA_PENDIENTES)[cite: 1]
+        datos_cola = leer_hoja_completa(HOJA_PENDIENTES)
     except Exception as e:
         st.error(f"Error al conectar con la base de datos: {e}")
         st.stop()
 
 lote_auditar = []
 for fila in datos_cola[1:]:
-    estado = str(fila[6]).strip().upper()[cite: 1]
-    tipo = str(fila[7]).strip().upper()[cite: 1]
+    estado = str(fila[6]).strip().upper()
+    tipo = str(fila[7]).strip().upper()
     
     # Traemos los individuales procesados y también las Pólizas Madre que la IA ya desglosó
     if (estado == "PROCESADO") or (estado == "PROCESADO_DESGLOSADO" and tipo == "POLIZA_MADRE"):
         try:
-            datos_ia = json.loads(fila[8]) if len(fila) > 8 and fila[8] else {}[cite: 1]
-            link_madre = fila[5] if len(fila) > 5 else "N/A"[cite: 1]
+            datos_ia = json.loads(fila[8]) if len(fila) > 8 and fila[8] else {}
+            link_madre = fila[5] if len(fila) > 5 else "N/A"
             id_madre = extraer_id_drive(link_madre) if link_madre != "N/A" else "INDEPENDIENTE"
             
             lote_auditar.append({
-                "ID_CARGA": fila[0],[cite: 1]
+                "ID_CARGA": fila[0],
                 "PATENTE": datos_ia.get("patente", "S_D").upper(),
                 "TIPO_DOC": tipo,
                 "VENCIMIENTO": datos_ia.get("vencimiento", "S/D"), 
-                "LINK_TEMP": fila[4],[cite: 1]
+                "LINK_TEMP": fila[4],
                 "LINK_MADRE": link_madre,
                 "ID_MADRE_GRUPO": id_madre,
                 "ESTADO": estado
@@ -199,7 +199,7 @@ with col_auditoria:
                 try:
                     nuevo_nombre = f"{patente_corregida}_{tipo_corregido}.pdf"
                     id_drive_temp = extraer_id_drive(fila_actual["LINK_TEMP"])
-                    link_definitivo = mover_y_renombrar_archivo(id_drive_temp, CARPETA_CERTIFICADOS, nuevo_nombre)[cite: 1]
+                    link_definitivo = mover_y_renombrar_archivo(id_drive_temp, CARPETA_CERTIFICADOS, nuevo_nombre)
                     
                     if tipo_corregido != "POLIZA_MADRE":
                         columna_destino = "LINK_CERTIFICADO_SEGURO"
@@ -207,9 +207,9 @@ with col_auditoria:
                         elif tipo_corregido == "VTV": columna_destino = "LINK_VTV"
                         elif tipo_corregido == "CEDULA_VERDE": columna_destino = "LINK_CEDULA"
                             
-                        actualizar_fila(HOJA_FLOTA, "PATENTE", patente_corregida, {columna_destino: link_definitivo})[cite: 1]
+                        actualizar_fila(HOJA_FLOTA, "PATENTE", patente_corregida, {columna_destino: link_definitivo})
                     
-                    eliminar_fila(HOJA_PENDIENTES, id_actual)[cite: 1]
+                    eliminar_fila(HOJA_PENDIENTES, id_actual)
                     
                     # Limpiamos selección post-aprobación
                     st.session_state.audit_sel = []
@@ -219,7 +219,7 @@ with col_auditoria:
                     st.error(f"Error: {str(e)}")
 
         if st.button("🗑️ Eliminar Registro", use_container_width=True):
-            eliminar_fila(HOJA_PENDIENTES, id_actual)[cite: 1]
+            eliminar_fila(HOJA_PENDIENTES, id_actual)
             st.session_state.audit_sel = []
             st.session_state.audit_prev = None
             st.rerun()
@@ -243,7 +243,7 @@ with col_auditoria:
                         
                         nuevo_nombre = f"{patente}_{tipo_doc}.pdf"
                         id_drive_temp = extraer_id_drive(fila_lote["LINK_TEMP"])
-                        link_definitivo = mover_y_renombrar_archivo(id_drive_temp, CARPETA_CERTIFICADOS, nuevo_nombre)[cite: 1]
+                        link_definitivo = mover_y_renombrar_archivo(id_drive_temp, CARPETA_CERTIFICADOS, nuevo_nombre)
                         
                         if tipo_doc != "POLIZA_MADRE":
                             columna_destino = "LINK_CERTIFICADO_SEGURO"
@@ -251,9 +251,9 @@ with col_auditoria:
                             elif tipo_doc == "VTV": columna_destino = "LINK_VTV"
                             elif tipo_doc == "CEDULA_VERDE": columna_destino = "LINK_CEDULA"
                                 
-                            actualizar_fila(HOJA_FLOTA, "PATENTE", patente, {columna_destino: link_definitivo})[cite: 1]
+                            actualizar_fila(HOJA_FLOTA, "PATENTE", patente, {columna_destino: link_definitivo})
                             
-                        eliminar_fila(HOJA_PENDIENTES, id_carga)[cite: 1]
+                        eliminar_fila(HOJA_PENDIENTES, id_carga)
                         exitos += 1
                     except Exception as e:
                         status.write(f"❌ Error con {patente}: {str(e)}")
