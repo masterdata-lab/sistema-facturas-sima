@@ -180,26 +180,47 @@ with col_auditoria:
         # MODO INDIVIDUAL
         id_actual = st.session_state.audit_sel[0]
         fila_actual = df_lote[df_lote["ID_CARGA"] == id_actual].iloc[0]
-        
-        st.markdown("**Control Individual**")
-        st.write("Podés corregir los datos antes de enviar a la base de datos:")
-        
-        patente_corregida = st.text_input("Patente", value=fila_actual["PATENTE"]).strip().upper()
-        
-        opciones_tipo = ["CERTIFICADO_SEGURO", "TITULO", "CEDULA_VERDE", "VTV", "POLIZA_MADRE"]
         tipo_actual = fila_actual["TIPO_DOC"]
-        idx_tipo = opciones_tipo.index(tipo_actual) if tipo_actual in opciones_tipo else 0
-        tipo_corregido = st.selectbox("Clasificación", opciones_tipo, index=idx_tipo)
         
+        st.markdown(f"**Control Individual: {tipo_actual.replace('_', ' ')}**")
+        st.write("Corregí o completá los datos antes de guardar:")
+        
+        # --- FORMULARIO DINÁMICO SEGÚN TIPO DE DOCUMENTO ---
+        if tipo_actual == "POLIZA_MADRE":
+            asegurado = st.text_input("Razón Social / Asegurado").strip()
+            cuit = st.text_input("CUIT").strip()
+            num_poliza = st.text_input("Número de Póliza").strip()
+            
+            c1, c2 = st.columns(2)
+            with c1: vigencia_desde = st.date_input("Vigencia Desde")
+            with c2: vigencia_hasta = st.date_input("Vigencia Hasta")
+            tipo_corregido = "POLIZA_MADRE"
+            nuevo_nombre = f"POLIZA_{num_poliza if num_poliza else 'SD'}.pdf"
+            
+        else:
+            patente_corregida = st.text_input("Patente", value=fila_actual["PATENTE"]).strip().upper()
+            opciones_tipo = ["CERTIFICADO_SEGURO", "TITULO", "CEDULA_VERDE", "VTV", "POLIZA_MADRE"]
+            idx_tipo = opciones_tipo.index(tipo_actual) if tipo_actual in opciones_tipo else 0
+            tipo_corregido = st.selectbox("Clasificación", opciones_tipo, index=idx_tipo)
+            nuevo_nombre = f"{patente_corregida}_{tipo_corregido}.pdf"
+
         st.write("")
         if st.button("✅ Aprobar y Guardar", type="primary", use_container_width=True):
-            with st.spinner("Moviendo a carpeta definitiva..."):
+            with st.spinner("Guardando y moviendo en Drive..."):
                 try:
-                    nuevo_nombre = f"{patente_corregida}_{tipo_corregido}.pdf"
                     id_drive_temp = extraer_id_drive(fila_actual["LINK_TEMP"])
                     link_definitivo = mover_y_renombrar_archivo(id_drive_temp, ID_DRIVE_RAIZ, nuevo_nombre)
                     
-                    if tipo_corregido != "POLIZA_MADRE":
+                    if tipo_corregido == "POLIZA_MADRE":
+                        # Acá podés decidir en qué hoja guardar los datos generales de la póliza
+                        # Por ahora actualizamos en PENDIENTES o en una hoja maestra si la tenés.
+                        nuevos_datos = {
+                            "ASEGURADO": asegurado, "CUIT": cuit, "POLIZA": num_poliza, 
+                            "VIGENCIA_DESDE": str(vigencia_desde), "VIGENCIA_HASTA": str(vigencia_hasta),
+                            "LINK_DEF": link_definitivo
+                        }
+                        # Ejemplo: actualizar_fila("HOJA_POLIZAS", "POLIZA", num_poliza, nuevos_datos)
+                    else:
                         columna_destino = "LINK_CERTIFICADO_SEGURO"
                         if tipo_corregido == "TITULO": columna_destino = "LINK_TITULO"
                         elif tipo_corregido == "VTV": columna_destino = "LINK_VTV"
@@ -209,7 +230,6 @@ with col_auditoria:
                     
                     eliminar_fila(HOJA_PENDIENTES, id_actual)
                     
-                    # Limpiamos selección post-aprobación
                     st.session_state.audit_sel = []
                     st.session_state.audit_prev = None
                     st.rerun()
@@ -221,44 +241,3 @@ with col_auditoria:
             st.session_state.audit_sel = []
             st.session_state.audit_prev = None
             st.rerun()
-
-    else:
-        # MODO LOTE
-        st.markdown("**Aprobación Masiva**")
-        st.info(f"Seleccionaste un lote de **{cant_sel} documentos**.")
-        st.write("Se organizarán en Drive y actualizarán la base usando las patentes extraídas por la IA.")
-        
-        if st.button(f"🚀 Aprobar Lote Completo", type="primary", use_container_width=True):
-            with st.status(f"Procesando {cant_sel} archivos...", expanded=True) as status:
-                exitos = 0
-                for id_carga in st.session_state.audit_sel:
-                    try:
-                        fila_lote = df_lote[df_lote["ID_CARGA"] == id_carga].iloc[0]
-                        patente = fila_lote["PATENTE"]
-                        tipo_doc = fila_lote["TIPO_DOC"]
-                        
-                        status.write(f"🔄 Ruteando {patente}...")
-                        
-                        nuevo_nombre = f"{patente}_{tipo_doc}.pdf"
-                        id_drive_temp = extraer_id_drive(fila_lote["LINK_TEMP"])
-                        link_definitivo = mover_y_renombrar_archivo(id_drive_temp, ID_DRIVE_RAIZ, nuevo_nombre)
-                        
-                        if tipo_doc != "POLIZA_MADRE":
-                            columna_destino = "LINK_CERTIFICADO_SEGURO"
-                            if tipo_doc == "TITULO": columna_destino = "LINK_TITULO"
-                            elif tipo_doc == "VTV": columna_destino = "LINK_VTV"
-                            elif tipo_doc == "CEDULA_VERDE": columna_destino = "LINK_CEDULA"
-                                
-                            actualizar_fila(HOJA_FLOTA, "PATENTE", patente, {columna_destino: link_definitivo})
-                            
-                        eliminar_fila(HOJA_PENDIENTES, id_carga)
-                        exitos += 1
-                    except Exception as e:
-                        status.write(f"❌ Error con {patente}: {str(e)}")
-                
-                status.update(label=f"¡Lote finalizado! ({exitos}/{cant_sel})", state="complete")
-                
-            if exitos > 0:
-                st.session_state.audit_sel = []
-                st.session_state.audit_prev = None
-                st.rerun()
