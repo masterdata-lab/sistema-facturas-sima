@@ -6,7 +6,8 @@ from utils.conexiones import (
     mover_y_renombrar_archivo, 
     actualizar_fila, 
     eliminar_fila,
-    extraer_id_drive
+    extraer_id_drive,
+    ID_DRIVE_RAIZ
 )
 
 st.set_page_config(page_title="Auditoría de Flota", page_icon="⚖️", layout="wide")
